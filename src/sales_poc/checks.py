@@ -19,14 +19,18 @@ from contextlib import contextmanager
 
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError, ProfileNotFound
 from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, TopicPartition
+from neo4j import READ_ACCESS
+from neo4j.exceptions import AuthError, ConfigurationError, Neo4jError, ServiceUnavailable
 
 from sales_poc.aws import s3_client, s3vectors_client
 from sales_poc.config import (
     ConfigError,
     get_aws_settings,
     get_kafka_settings,
+    get_neo4j_settings,
     get_vector_store_settings,
 )
+from sales_poc.graph.connection import driver as neo4j_driver
 from sales_poc.kafka import KafkaSetupError, connection_config, login_method
 
 
@@ -249,10 +253,40 @@ def check_kafka() -> str:
     )
 
 
+def check_neo4j() -> str:
+    """Connect, log in, and run `RETURN 1` in a read-only session. Nothing is written."""
+    settings = get_neo4j_settings()
+    try:
+        with neo4j_driver(settings) as drv:
+            drv.verify_connectivity()
+            server = drv.get_server_info()
+            with drv.session(default_access_mode=READ_ACCESS) as session:
+                value = session.run("RETURN 1 AS ok").single()["ok"]
+    except AuthError:
+        raise CheckError(
+            "Neo4j refused the login. Check NEO4J_USER and NEO4J_PASSWORD in .env."
+        ) from None
+    except ServiceUnavailable as exc:
+        raise CheckError(
+            f"Could not reach Neo4j at {settings.neo4j_uri}. Check NEO4J_URI, and in the Aura "
+            f"console check the instance is running (free instances pause when idle). "
+            f"Details: {exc}"
+        ) from None
+    except (ConfigurationError, ValueError) as exc:
+        raise CheckError(f"NEO4J_URI looks wrong ({settings.neo4j_uri}): {exc}") from None
+    except Neo4jError as exc:
+        raise CheckError(f"Neo4j error: {exc}") from None
+
+    if value != 1:
+        raise CheckError(f"RETURN 1 gave back {value!r}.")
+    return f"logged in as '{settings.neo4j_user}' and ran RETURN 1 on {server.agent}"
+
+
 CHECKS: dict[str, Callable[[], str]] = {
     "s3": check_s3,
     "s3vectors": check_s3_vectors,
     "kafka": check_kafka,
+    "neo4j": check_neo4j,
 }
 
 
