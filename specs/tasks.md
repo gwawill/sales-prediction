@@ -1,7 +1,10 @@
 # Tasks — Dell-style Sales Prediction AI (Proof of Concept)
 
-Each task is one branch and one commit. Do them in order. A task is finished only when its
-"Done when" check has actually been run and passed.
+The work is split into tasks (T0, T1, ...), and each task is split into subtasks (T0.1, T0.2, ...).
+
+**Each subtask is one commit.** Do subtasks in order. A subtask is finished only when its
+"Done when" check has actually been run and passed. After each subtask, stop, report, and give
+the commit message.
 
 Requirement IDs such as FR-12 point to `spec.md`. Design details are in `plan.md`.
 
@@ -9,120 +12,154 @@ Requirement IDs such as FR-12 point to `spec.md`. Design details are in `plan.md
 
 ## T0 — Project setup
 
-Create `pyproject.toml`, the folder layout from `plan.md`, `.gitignore`, `.env.example`,
-`config.py` (settings from `.env`) and JSON logging.
-
-Done when: `pip install -e .[dev]` works and `pytest` runs (with zero or one trivial test).
-
-Note: this folder is not a Git repository yet. Run `git init` before this task.
+- **T0.1 — Package skeleton.** `pyproject.toml`, `src/sales_poc/` with empty sub-packages from
+  `plan.md`, `tests/` folders, `.gitignore`.
+  Done when: `pip install -e .[dev]` works.
+- **T0.2 — Settings.** `config.py` reading `.env`, plus `.env.example` listing every setting.
+  Done when: a unit test loads settings from a sample env and fails clearly when one is missing.
+- **T0.3 — JSON logging.** `logging.py` that prints one JSON object per line.
+  Done when: a unit test checks a log line is valid JSON with time, level and message.
+- **T0.4 — Test setup.** pytest config with the `integration` marker skipped by default.
+  Done when: `pytest` runs unit tests and skips integration tests.
 
 ## T1 — Cloud connection check
 
-Write `scripts/check_cloud.py`. It tests each service with one small action: write and read a
-file in S3, create and query a tiny S3 Vectors index, send and receive one Kafka message on Aiven,
-run `RETURN 1` on Neo4j, and get one chat reply and one embedding.
+- **T1.1 — S3 check.** Write, read and delete a small file.
+- **T1.2 — S3 Vectors check.** Create a tiny index, add one vector, query it, delete it.
+- **T1.3 — Aiven Kafka check.** Send and receive one message using the SSL files in `secrets/`.
+- **T1.4 — Neo4j check.** Run `RETURN 1` on AuraDB.
+- **T1.5 — OpenRouter check.** Get one chat reply and try one embedding. Record the embedding
+  choice (OpenRouter or Bedrock Titan) in `plan.md`.
+- **T1.6 — One command.** `scripts/check_cloud.py` runs all checks and prints OK or the error.
 
-Decide the embedding model here (OpenRouter or Bedrock Titan) and record the choice in `plan.md`.
-
-Done when: the script prints OK for every service.
+Done when (each subtask): its check prints OK against the real service.
 
 ## T2 — Data generator (FR-1 to FR-5)
 
-Generate reference data, 12 months of batch history as one file per day with injected problems,
-and a function that makes one live order at a time.
-
-Done when: unit tests show the same seed gives the same output, that there is one file per day,
-and that each kind of problem from FR-4 is present, including missing values.
+- **T2.1 — Reference data.** Customers, products, regions, channels with stable IDs.
+  Done when: unit test shows same seed gives same tables.
+- **T2.2 — Clean daily history.** 12 months of transactions, one CSV file per day, with
+  realistic seasonality.
+  Done when: unit test shows one file per day and same seed gives same files.
+- **T2.3 — Injected problems.** Duplicates, missing values, bad formats, unknown IDs, negative
+  quantities, late events (FR-4).
+  Done when: unit test finds each problem type in the output.
+- **T2.4 — Live order maker.** A function that returns one new order at a time, with the same
+  kinds of problems.
+  Done when: unit test checks the order shape and that problems appear at the set rate.
+- **T2.5 — Command.** `generate-data` command that writes everything to `data/`.
+  Done when: running it creates the expected files.
 
 ## T3 — Shared ETL transform (FR-9 to FR-15, FR-33)
 
-Pure functions for validate, clean, fill-or-flag missing values, dedupe, join and quarantine,
-returning clean rows (with `quality_flags`), rejected rows with reasons, and counts.
+All pure functions, no network.
 
-Done when: unit tests cover every problem type from FR-4, every fill rule from FR-33, and the
-reconciliation rule from FR-21. No network is used.
+- **T3.1 — Schema and validation.** Required fields, types and ranges (FR-10).
+- **T3.2 — Format cleaning.** Dates, currency strings, text case (FR-11).
+- **T3.3 — Fill or flag missing values.** Rules from FR-33, with `quality_flags`.
+- **T3.4 — Duplicates.** Remove by `transaction_id` (FR-12).
+- **T3.5 — Joins.** Attach customer, product, region and channel details (FR-13).
+- **T3.6 — Quarantine and counts.** Rejected rows with reasons, and the reconciliation rule
+  (FR-14, FR-21).
+- **T3.7 — One entry point.** A single `run_etl(rows)` that chains all steps.
+
+Done when (each subtask): its unit tests pass.
 
 ## T4 — Data lake writer (FR-8, FR-16, FR-17, FR-20, FR-21)
 
-Write raw, clean, quarantine and report files to S3 using the layout in `plan.md`, with the
-read-merge-write idempotent load.
+- **T4.1 — Raw writer.** Save inputs unchanged to `raw/`.
+- **T4.2 — Clean writer.** Read-merge-write per date partition, deduped by `transaction_id`.
+- **T4.3 — Quarantine and report writers.**
 
 Done when: an integration test writes the same rows twice and the clean files are unchanged.
 
 ## T5 — Batch pipeline (FR-6, FR-34)
 
-A command that uploads new daily files to `raw/`, runs ETL and loads the lake. It has a `--once`
-mode and a `--every N` scheduled mode, and remembers which files it has already loaded.
-
-Done when: 12 months of history load, the report adds up, a second run changes nothing, and in
-scheduled mode a newly dropped daily file is picked up while old ones are skipped (acceptance
-checks 2, 3 and 3a).
+- **T5.1 — Run once.** Upload new daily files, run ETL, load the lake.
+  Done when: 12 months load and the report adds up (acceptance check 2).
+- **T5.2 — Loaded-file list.** Remember loaded files in `state/batch_loaded.json` and skip them.
+  Done when: a second run loads nothing and changes nothing (acceptance check 3).
+- **T5.3 — Scheduled mode.** `--every N` repeats the run.
+  Done when: a new daily file dropped in is picked up on the next run (acceptance checks 3, 3a).
 
 ## T6 — Stream producer (FR-3, FR-4)
 
-Send live orders to Aiven Kafka at a chosen rate, including some duplicates and late events.
+- **T6.1 — Producer.** Send live orders to Aiven Kafka at a chosen rate.
+- **T6.2 — Problem events.** Add duplicates and late events on purpose.
 
-Done when: messages can be seen arriving in the Aiven console or with a test consumer.
+Done when: messages can be seen arriving with a test consumer.
 
 ## T7 — Stream consumer (FR-7, FR-15)
 
-Micro-batch consumer using the shared ETL, writing to the lake, committing offsets only after a
-successful write.
+- **T7.1 — Micro-batch reading.** Collect N events or wait T seconds.
+- **T7.2 — ETL and load.** Run the shared ETL and write to the lake.
+- **T7.3 — Safe offset commit.** Tell Kafka "done" only after the write succeeds.
 
-Done when: acceptance checks 4 and 5 pass, including after stopping and restarting the consumer
-in the middle of a run.
+Done when: acceptance checks 4 and 5 pass, including after a restart in the middle of a run.
 
 ## T8 — Graph loader (FR-18)
 
-Create Neo4j constraints and load nodes and relationships from the clean lake with `MERGE`.
+- **T8.1 — Constraints.** Uniqueness constraints for every node type.
+- **T8.2 — Reference nodes.** Customers, products, regions, channels.
+- **T8.3 — Transactions and links.** With `MERGE`, in batches.
 
 Done when: a re-load does not change node counts, and acceptance check 6 passes.
 
 ## T9 — Vector loader (FR-19)
 
-Build text summaries from the clean lake, create embeddings, and store them in S3 Vectors with
-metadata. Add a search function.
+- **T9.1 — Summary builder.** Text summaries from the clean lake, with metadata.
+- **T9.2 — Embeddings.** Wrapper for the chosen embedding model.
+- **T9.3 — Load and search.** Put vectors in S3 Vectors with stable IDs, and a search function.
 
-Done when: searching "laptop sales in EMEA" returns EMEA laptop summaries at the top, and a
-re-load does not add copies.
+Done when: searching "laptop sales in EMEA" returns EMEA laptop summaries first, and a re-load
+adds no copies.
 
 ## T10 — Forecasting (FR-23 to FR-25)
 
-Weekly aggregation, Holt-Winters and the baseline, a 4-week holdout error report, and saving the
-forecast to S3.
+- **T10.1 — Weekly aggregation.** Sales per category, region and week.
+- **T10.2 — Models.** Holt-Winters and the 4-week-average baseline.
+- **T10.3 — Evaluation.** Error on the last 4 held-back weeks, for both.
+- **T10.4 — Save forecast.** Write to `forecasts/` in S3.
 
-Done when: acceptance check 7 passes and the error report prints for model and baseline.
+Done when: acceptance check 7 passes.
 
 ## T11 — LLM client and RAG (FR-26, FR-28)
 
-OpenRouter wrapper and a RAG function that answers only from retrieved summaries and lists them.
+- **T11.1 — LLM client.** OpenRouter wrapper with model name and limits from settings.
+- **T11.2 — RAG answer.** Retrieve summaries, answer only from them, list the sources.
 
 Done when: a sample question gets an answer that names the summaries it used.
 
 ## T12 — Agent and tools (FR-27 to FR-30)
 
-Tool-calling loop with `sql_query`, `graph_query`, `vector_search` and `get_forecast`, with
-read-only guards and a step limit.
+- **T12.1 — `sql_query` tool.** DuckDB on clean Parquet, single `SELECT` only.
+- **T12.2 — `graph_query` tool.** Cypher in a read-only transaction.
+- **T12.3 — `vector_search` and `get_forecast` tools.**
+- **T12.4 — Agent loop.** Tool calling with a step limit and a sources list.
 
 Done when: unit tests show write queries are rejected, and the four example questions in
 `spec.md` section 3 get sensible answers with sources (acceptance check 8).
 
 ## T13 — Web API (FR-31)
 
-FastAPI app with `/ask`, `/forecast`, `/quality/latest` and `/health`.
+- **T13.1 — `/health` and `/quality/latest`.**
+- **T13.2 — `/forecast`.**
+- **T13.3 — `/ask`.**
 
-Done when: each endpoint answers correctly when called locally.
+Done when (each subtask): its endpoint answers correctly when called locally.
 
 ## T14 — Dashboard (FR-32, optional)
 
-Simple Streamlit page: sales over time, forecast, and a question box that calls the API.
+- **T14.1 — Sales and forecast charts.**
+- **T14.2 — Question box** that calls `/ask`.
 
 Done when: the page loads and shows real data from the lake.
 
 ## T15 — Demo script and README
 
-A `scripts/demo.py` that runs the acceptance checks in order, and a README explaining how to set
-up and run everything. Also add a short note linking each part of the PoC to the matching section
-of `dell.md`, for interview practice.
+- **T15.1 — Demo script.** `scripts/demo.py` runs the acceptance checks in order.
+- **T15.2 — README.** Setup and run steps, plus honest notes on what differs from real scale.
+- **T15.3 — Interview map.** A short note linking each PoC part to the matching section of
+  `dell.md`.
 
 Done when: a fresh run of the demo script passes every acceptance check.

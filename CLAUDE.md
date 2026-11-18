@@ -27,6 +27,18 @@ point it out and suggest an honest way to say it.
 Keep the same plain, friendly style that `dell.md` already uses. Explain every technical term
 the first time it appears, as if the reader is new to the field.
 
+## How we work in this project
+
+This adds to the "How we work" rules in my global CLAUDE.md and wins where they differ.
+
+- The plan is in `specs/` (`spec.md`, `plan.md`, `tasks.md`). Follow `tasks.md` in order.
+- Each task is split into subtasks (T0.1, T0.2, ...). **One subtask is one commit.** Finish one
+  subtask, report what changed, what ran and the result, give the commit message, then wait.
+- Commit messages use Conventional Commits: `docs: ...`, `feat: ...`, `fix: ...`, `test: ...`,
+  `refactor: ...`, `chore: ...`.
+- I manage all Git work myself. Do not run Git write commands, and do not comment on Git setup,
+  branches or how to group commits. Just give the commit message.
+
 ## How to write to me
 
 Always give me context that is fully understandable and friendly to a human reader.
