@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "sales-poc"
 version = "0.1.0"
 description = "Proof of concept of a Dell-style sales prediction AI platform (see dell.md and specs/)."
-readme = "dell.md"
 requires-python = ">=3.11"
 # Runtime libraries are added in the subtask that first needs them.
 dependencies = [
