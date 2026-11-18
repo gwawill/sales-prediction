@@ -102,6 +102,47 @@ def _pick(rng: np.random.Generator, mix: dict[str, float], size: int) -> np.ndar
     return rng.choice(list(mix), size=size, p=list(mix.values()))
 
 
+def pick_category(rng: np.random.Generator, segment: str) -> str:
+    return str(_pick(rng, CATEGORY_MIX[segment], 1)[0])
+
+
+def make_order(
+    rng: np.random.Generator,
+    segment: str,
+    customer_id: str,
+    category: str,
+    products_by_category: dict[str, pd.DataFrame],
+) -> dict:
+    """One clean order line, without its ID and time (the caller adds those).
+
+    Shared by the daily history and the live order maker, so both follow the same rules.
+    """
+    options = products_by_category[category]
+    product = options.iloc[int(rng.integers(0, len(options)))]
+    quantity = int(rng.integers(1, MAX_QUANTITY[segment] + 1))
+    if category == "Accessory":
+        quantity *= 2  # accessories are bought in bigger numbers
+    unit_price = round(float(product["list_price"]) * float(rng.uniform(0.97, 1.03)), 2)
+    low, high = DISCOUNT_RANGE[segment]
+    discount = round(float(rng.uniform(low, high)) * 2) / 2  # steps of 0.5%
+    total = round(quantity * unit_price * (1 - discount / 100), 2)
+    return {
+        "customer_id": customer_id,
+        "product_id": product["product_id"],
+        "channel_id": str(_pick(rng, CHANNEL_MIX[segment], 1)[0]),
+        "quantity": quantity,
+        "unit_price": unit_price,
+        "discount_pct": discount,
+        "total_amount": total,
+        "currency": "USD",
+    }
+
+
+def format_event_time(t: datetime) -> str:
+    """The standard time format in clean data: UTC, like 2026-03-01T14:05:09Z."""
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _orders_for_day(
     rng: np.random.Generator, day: date, start: date, ref: ReferenceData
 ) -> pd.DataFrame:
@@ -129,8 +170,7 @@ def _orders_for_day(
     products_by_category = {c: g for c, g in ref.products.groupby("category")}
     rows = []
     for customer in picked.itertuples(index=False):
-        segment = customer.segment
-        category = str(_pick(rng, CATEGORY_MIX[segment], 1)[0])
+        category = pick_category(rng, customer.segment)
 
         if (
             day.month == 3
@@ -140,41 +180,22 @@ def _orders_for_day(
         ):
             continue  # the March story
 
-        options = products_by_category[category]
-        product = options.iloc[int(rng.integers(0, len(options)))]
-        quantity = int(rng.integers(1, MAX_QUANTITY[segment] + 1))
-        if category == "Accessory":
-            quantity *= 2  # accessories are bought in bigger numbers
-        unit_price = round(float(product["list_price"]) * float(rng.uniform(0.97, 1.03)), 2)
-        low, high = DISCOUNT_RANGE[segment]
-        discount = round(float(rng.uniform(low, high)) * 2) / 2  # steps of 0.5%
-        total = round(quantity * unit_price * (1 - discount / 100), 2)
+        order = make_order(rng, customer.segment, customer.customer_id, category, products_by_category)
         seconds = int(rng.integers(0, 24 * 60 * 60))
-        event_time = datetime.combine(day, time(), tzinfo=timezone.utc) + timedelta(seconds=seconds)
-
-        rows.append(
-            {
-                "event_time": event_time,
-                "customer_id": customer.customer_id,
-                "product_id": product["product_id"],
-                "channel_id": str(_pick(rng, CHANNEL_MIX[segment], 1)[0]),
-                "quantity": quantity,
-                "unit_price": unit_price,
-                "discount_pct": discount,
-                "total_amount": total,
-                "currency": "USD",
-            }
+        order["event_time"] = datetime.combine(day, time(), tzinfo=timezone.utc) + timedelta(
+            seconds=seconds
         )
+        rows.append(order)
 
+    if not rows:
+        return pd.DataFrame(columns=COLUMNS)
     day_orders = pd.DataFrame(rows).sort_values("event_time", ignore_index=True)
     day_orders.insert(
         0,
         "transaction_id",
         [f"TX-{day:%Y%m%d}-{i:05d}" for i in range(1, len(day_orders) + 1)],
     )
-    day_orders["event_time"] = day_orders["event_time"].map(
-        lambda t: t.strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
+    day_orders["event_time"] = day_orders["event_time"].map(format_event_time)
     return day_orders[COLUMNS]
 
 

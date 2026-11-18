@@ -53,14 +53,57 @@ class MessyHistory:
     log: pd.DataFrame                # one row per problem added (LOG_COLUMNS)
 
 
+# How each number column is written as text, like a real CSV export.
+_TEXT_FORMATS = {
+    "unit_price": "{:.2f}",
+    "total_amount": "{:.2f}",
+    "discount_pct": "{:g}",  # 3.0 -> "3", 0.5 -> "0.5"
+    "quantity": "{}",
+}
+
+
 def _as_text(rows: pd.DataFrame) -> pd.DataFrame:
     """Every value as a string, like a real CSV export, so formats can be broken freely."""
     text = rows[COLUMNS].astype(object)
-    text["unit_price"] = rows["unit_price"].map(lambda v: f"{v:.2f}")
-    text["total_amount"] = rows["total_amount"].map(lambda v: f"{v:.2f}")
-    text["discount_pct"] = rows["discount_pct"].map(lambda v: f"{v:g}")  # 3.0 -> "3", 0.5 -> "0.5"
-    text["quantity"] = rows["quantity"].map(str)
+    for column, fmt in _TEXT_FORMATS.items():
+        text[column] = rows[column].map(fmt.format)
     return text
+
+
+def order_as_text(order: dict) -> dict[str, str | None]:
+    """One clean order as text values, in column order, formatted exactly like `_as_text`."""
+    return {
+        column: _TEXT_FORMATS.get(column, "{}").format(order[column]) for column in COLUMNS
+    }
+
+
+# Problems that change the row's values in place. Duplicate and late are handled by the
+# caller, because what they mean depends on files (history) or timing (live orders).
+IN_PLACE_PROBLEMS = {"missing_fillable", "missing_required", "bad_format", "unknown_id",
+                     "negative_quantity"}
+
+
+def damage_row(row: pd.Series, kind: str, rng: np.random.Generator) -> tuple[pd.Series, str]:
+    """Apply one in-place problem to a copy of `row`. Returns (damaged row, detail)."""
+    row = row.copy()
+    if kind == "missing_fillable":
+        detail = str(rng.choice(FILLABLE_FIELDS))
+        row[detail] = None
+    elif kind == "missing_required":
+        detail = str(rng.choice(REQUIRED_FIELDS))
+        row[detail] = None
+    elif kind == "bad_format":
+        detail = str(rng.choice(BAD_FORMATS))
+        row = _break_format(row, detail)
+    elif kind == "unknown_id":
+        detail = str(rng.choice(list(UNKNOWN_IDS)))
+        row[detail] = UNKNOWN_IDS[detail]
+    elif kind == "negative_quantity":
+        detail = "quantity"
+        row["quantity"] = str(-int(row["quantity"]))
+    else:
+        raise ValueError(f"'{kind}' is not an in-place problem")
+    return row, detail
 
 
 def _money(value: str) -> str:
@@ -121,37 +164,10 @@ def add_problems(
                 output[resend_day].append(row.copy())
                 record(tx, kind, "next_day_file" if resend_day != day else "same_file", resend_day, day)
 
-            elif kind == "missing_fillable":
-                field = str(rng.choice(FILLABLE_FIELDS))
-                row = row.copy()
-                row[field] = None
-                output[day].append(row)
-                record(tx, kind, field, day, day)
-
-            elif kind == "missing_required":
-                field = str(rng.choice(REQUIRED_FIELDS))
-                row = row.copy()
-                row[field] = None
-                output[day].append(row)
-                record(tx, kind, field, day, day)
-
-            elif kind == "bad_format":
-                fmt = str(rng.choice(BAD_FORMATS))
-                output[day].append(_break_format(row, fmt))
-                record(tx, kind, fmt, day, day)
-
-            elif kind == "unknown_id":
-                field = str(rng.choice(list(UNKNOWN_IDS)))
-                row = row.copy()
-                row[field] = UNKNOWN_IDS[field]
-                output[day].append(row)
-                record(tx, kind, field, day, day)
-
-            elif kind == "negative_quantity":
-                row = row.copy()
-                row["quantity"] = str(-int(row["quantity"]))
-                output[day].append(row)
-                record(tx, kind, "quantity", day, day)
+            elif kind in IN_PLACE_PROBLEMS:
+                damaged, detail = damage_row(row, kind, rng)
+                output[day].append(damaged)
+                record(tx, kind, detail, day, day)
 
             elif kind == "late":
                 delay = int(rng.integers(1, 4))
