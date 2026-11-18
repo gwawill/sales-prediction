@@ -58,14 +58,29 @@ class VectorStoreSettings(_GroupSettings):
 
 
 class KafkaSettings(_GroupSettings):
-    """Aiven for Apache Kafka, connected with SSL certificate files."""
+    """Aiven for Apache Kafka.
+
+    Two ways to log in:
+      - username and password (SASL), used when KAFKA_USERNAME and KAFKA_PASSWORD are set;
+      - client certificate files, used otherwise.
+    Both need the CA certificate (KAFKA_SSL_CA) to check the server is really Aiven.
+    """
 
     kafka_bootstrap_servers: str
     kafka_topic: str = "orders"
     kafka_consumer_group: str = "sales-poc-etl"
     kafka_ssl_ca: Path = Path("secrets/ca.pem")
+    # SASL login
+    kafka_username: str | None = None
+    kafka_password: SecretStr | None = None
+    kafka_sasl_mechanism: Literal["SCRAM-SHA-256", "SCRAM-SHA-512", "PLAIN"] = "SCRAM-SHA-256"
+    # Client certificate login
     kafka_ssl_cert: Path = Path("secrets/service.cert")
     kafka_ssl_key: Path = Path("secrets/service.key")
+
+    @property
+    def uses_sasl(self) -> bool:
+        return bool(self.kafka_username and self.kafka_password)
 
 
 class Neo4jSettings(_GroupSettings):
