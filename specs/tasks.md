@@ -21,6 +21,10 @@ Requirement IDs such as FR-12 point to `spec.md`. Design details are in `plan.md
   Done when: a unit test checks a log line is valid JSON with time, level and message.
 - **T0.4 — Test setup.** pytest config with the `integration` marker skipped by default.
   Done when: `pytest` runs unit tests and skips integration tests.
+- **T0.5 — Settings split into groups.** Added after T0.4: one settings group per service (AWS,
+  vector store, Kafka, Neo4j, LLM, embeddings, app), each loaded only when needed, so one
+  service can be tested before the others are set up.
+  Done when: unit tests show each group loads with only its own values.
 
 ## T1 — Cloud connection check
 
