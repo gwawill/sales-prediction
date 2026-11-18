@@ -44,7 +44,7 @@ where the code lives. Requirement IDs such as FR-12 point back to `spec.md`.
 | Kafka client | confluent-kafka | Has ready-made Windows builds, works with Aiven SSL |
 | Graph | neo4j Python driver | Official driver for AuraDB |
 | LLM | openai Python SDK pointed at OpenRouter | OpenRouter speaks the same API, including tool calling |
-| Embeddings | OpenRouter if available, else Bedrock Titan | Decided in task T1 |
+| Embeddings | Local `BAAI/bge-small-en-v1.5` (384 numbers per vector) run by fastembed | Decided in T1.5: free, no API key, text stays on the PC, no server or PyTorch needed |
 | Forecast | statsmodels (Holt-Winters) with a simple baseline | Easy to explain, enough for weekly data |
 | Web API | FastAPI + uvicorn | Matches dell.md |
 | Settings | pydantic-settings + `.env` | One place for all keys and names |
@@ -203,4 +203,9 @@ model beats the baseline.
 - **Free tier limits** on Aiven and AuraDB. Keep data small. Check limits in task T1.
 - **S3 Vectors region.** Not in every region. Check in task T1.
 - **LLM cost.** Use a cheap model by default and the agent step limit.
+- **Embedding model is fixed once loaded.** The S3 Vectors index is created with 384
+  dimensions for bge-small-en-v1.5. Changing the model means rebuilding the index. The model
+  files live in `models/` (ignored by Git), downloaded on first use.
+- **Interview honesty.** The real project most likely used a cloud embedding service. The PoC
+  uses a local model to stay free; the idea (text in, meaning vector out) is the same.
 - **Windows quirks.** Use `pathlib` for paths and avoid shell-specific scripts.

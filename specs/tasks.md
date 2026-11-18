@@ -32,9 +32,11 @@ Requirement IDs such as FR-12 point to `spec.md`. Design details are in `plan.md
 - **T1.2 — S3 Vectors check.** Create a tiny index, add one vector, query it, delete it.
 - **T1.3 — Aiven Kafka check.** Send and receive one message using the SSL files in `secrets/`.
 - **T1.4 — Neo4j check.** Run `RETURN 1` on AuraDB.
-- **T1.5 — OpenRouter check.** Get one chat reply and try one embedding. Record the embedding
-  choice (OpenRouter or Bedrock Titan) in `plan.md`.
-- **T1.6 — One command.** `scripts/check_cloud.py` runs all checks and prints OK or the error.
+- **T1.5 — Local embedding check.** Decision: local `bge-small-en-v1.5` via fastembed (recorded
+  in `plan.md`). The check embeds three sentences and confirms the vector size is 384 and that
+  similar sentences score closer than unrelated ones.
+- **T1.6 — OpenRouter chat check.** Get one short chat reply from `LLM_MODEL`.
+- **T1.7 — One command.** `scripts/check_cloud.py` runs all checks and prints OK or the error.
 
 Done when (each subtask): its check prints OK against the real service.
 

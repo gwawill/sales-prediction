@@ -1,4 +1,10 @@
-from sales_poc.checks import check_kafka, check_neo4j, check_s3, check_s3_vectors
+from sales_poc.checks import (
+    check_embeddings,
+    check_kafka,
+    check_neo4j,
+    check_s3,
+    check_s3_vectors,
+)
 
 
 def test_s3_write_read_delete():
@@ -15,3 +21,7 @@ def test_kafka_send_and_read_back():
 
 def test_neo4j_login_and_query():
     assert "ran RETURN 1" in check_neo4j()
+
+
+def test_local_embeddings():
+    assert "vectors of size 384" in check_embeddings()

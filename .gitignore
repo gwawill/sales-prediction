@@ -8,6 +8,9 @@ dell.md
 # Generated data
 data/
 
+# Downloaded model files (local embedding model)
+models/
+
 # Python
 __pycache__/
 *.py[cod]

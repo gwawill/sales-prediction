@@ -22,7 +22,7 @@ REQUIRED = {
     KafkaSettings: {"KAFKA_BOOTSTRAP_SERVERS": "kafka-x.aivencloud.com:12345"},
     Neo4jSettings: {"NEO4J_URI": "neo4j+s://abc.databases.neo4j.io", "NEO4J_PASSWORD": "neo-secret"},
     LlmSettings: {"OPENROUTER_API_KEY": "or-secret", "LLM_MODEL": "some/model"},
-    EmbeddingSettings: {"EMBEDDING_MODEL": "some/embedding", "EMBEDDING_DIM": "1024"},
+    EmbeddingSettings: {},
     AppSettings: {},
 }
 
@@ -77,6 +77,10 @@ def test_defaults_are_filled_in(tmp_path):
     assert kafka.kafka_ssl_ca == Path("secrets/ca.pem")
     assert llm.agent_max_steps == 6
     assert app.random_seed == 42
+    embedding = load_settings(EmbeddingSettings, _env_file=env)
+    assert embedding.embedding_provider == "local"
+    assert embedding.embedding_model == "BAAI/bge-small-en-v1.5"
+    assert embedding.embedding_dim == 384
     assert aws.aws_profile is None
 
 

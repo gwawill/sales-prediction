@@ -101,11 +101,18 @@ class LlmSettings(_GroupSettings):
 
 
 class EmbeddingSettings(_GroupSettings):
-    """The model that turns text into embeddings (decided in task T1.5)."""
+    """The model that turns text into embeddings.
 
-    embedding_provider: Literal["openrouter", "bedrock"] = "openrouter"
-    embedding_model: str
-    embedding_dim: int = Field(gt=0)
+    Decided in task T1.5: a free local model, bge-small-en-v1.5, run on this PC by the
+    fastembed library. The vector store index is created with EMBEDDING_DIM, so changing
+    the model later means reloading the vector store.
+    """
+
+    embedding_provider: Literal["local", "openrouter", "bedrock"] = "local"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_dim: int = Field(default=384, gt=0)
+    # Where the local model files are kept. Not the Windows Temp folder, which can be wiped.
+    embedding_cache_dir: Path = Path("models")
 
 
 class AppSettings(_GroupSettings):

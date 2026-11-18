@@ -26,6 +26,7 @@ from sales_poc.aws import s3_client, s3vectors_client
 from sales_poc.config import (
     ConfigError,
     get_aws_settings,
+    get_embedding_settings,
     get_kafka_settings,
     get_neo4j_settings,
     get_vector_store_settings,
@@ -282,11 +283,73 @@ def check_neo4j() -> str:
     return f"logged in as '{settings.neo4j_user}' and ran RETURN 1 on {server.agent}"
 
 
+def _cosine(a, b) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = (sum(x * x for x in a) ** 0.5) * (sum(y * y for y in b) ** 0.5)
+    return dot / norm
+
+
+def check_embeddings() -> str:
+    """Embed three sentences with the local model and confirm the size and the meaning.
+
+    Two sentences about the same thing should be closer to each other than to an
+    unrelated one. That shows the model is really working, not just returning numbers.
+    """
+    settings = get_embedding_settings()
+    if settings.embedding_provider != "local":
+        raise CheckError(
+            f"EMBEDDING_PROVIDER is '{settings.embedding_provider}', but only 'local' is "
+            "built. Set EMBEDDING_PROVIDER=local in .env."
+        )
+
+    from fastembed import TextEmbedding  # imported here: loading it takes a moment
+
+    try:
+        model = TextEmbedding(
+            model_name=settings.embedding_model,
+            cache_dir=str(settings.embedding_cache_dir),
+        )
+    except ValueError as exc:
+        raise CheckError(f"fastembed does not know EMBEDDING_MODEL: {exc}") from None
+    except Exception as exc:  # noqa: BLE001 - download or file problems come in many types
+        raise CheckError(
+            f"Could not load '{settings.embedding_model}' into {settings.embedding_cache_dir}/ "
+            f"(the first run downloads it, so it needs internet): {exc}"
+        ) from None
+
+    texts = [
+        "Laptop sales in EMEA grew in March.",
+        "In March, notebook computer revenue rose in Europe.",
+        "The office coffee machine is broken.",
+    ]
+    vectors = [list(v) for v in model.embed(texts)]
+
+    sizes = {len(v) for v in vectors}
+    if sizes != {settings.embedding_dim}:
+        raise CheckError(
+            f"The model makes vectors of size {sizes}, but EMBEDDING_DIM is "
+            f"{settings.embedding_dim}. Make them match in .env."
+        )
+    related = _cosine(vectors[0], vectors[1])
+    unrelated = _cosine(vectors[0], vectors[2])
+    if related <= unrelated:
+        raise CheckError(
+            f"Similar sentences were not closer than unrelated ones "
+            f"({related:.3f} vs {unrelated:.3f})."
+        )
+    return (
+        f"'{settings.embedding_model}' made {len(vectors)} vectors of size "
+        f"{settings.embedding_dim}; similar sentences scored {related:.3f}, "
+        f"unrelated {unrelated:.3f}"
+    )
+
+
 CHECKS: dict[str, Callable[[], str]] = {
     "s3": check_s3,
     "s3vectors": check_s3_vectors,
     "kafka": check_kafka,
     "neo4j": check_neo4j,
+    "embeddings": check_embeddings,
 }
 
 
