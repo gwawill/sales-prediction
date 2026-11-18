@@ -20,6 +20,9 @@ dependencies = [
     "faker>=30",
 ]
 
+[project.scripts]
+generate-data = "sales_poc.datagen.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
