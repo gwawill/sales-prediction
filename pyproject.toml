@@ -15,6 +15,7 @@ dependencies = [
     "neo4j>=5.25",
     "certifi>=2024.2.2",
     "fastembed>=0.4",
+    "openai>=1.50",
 ]
 
 [project.optional-dependencies]

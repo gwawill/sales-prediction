@@ -11,23 +11,27 @@ Run one or more checks (no name = all):
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
+import openai
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError, ProfileNotFound
 from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, TopicPartition
 from neo4j import READ_ACCESS
 from neo4j.exceptions import AuthError, ConfigurationError, Neo4jError, ServiceUnavailable
 
+from sales_poc.ai.client import openrouter_client
 from sales_poc.aws import s3_client, s3vectors_client
 from sales_poc.config import (
     ConfigError,
     get_aws_settings,
     get_embedding_settings,
     get_kafka_settings,
+    get_llm_settings,
     get_neo4j_settings,
     get_vector_store_settings,
 )
@@ -344,12 +348,88 @@ def check_embeddings() -> str:
     )
 
 
+_SALES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_sales",
+        "description": "Get total sales for one region.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "region": {"type": "string", "enum": ["NA", "EMEA", "APJ", "LATAM"]},
+            },
+            "required": ["region"],
+        },
+    },
+}
+
+
+def check_llm() -> str:
+    """Two small calls to LLM_MODEL on OpenRouter: a plain reply, then a tool call.
+
+    The tool call matters because the agent (task T12) only works if the model can decide
+    to call a tool and fill in its arguments correctly.
+    """
+    settings = get_llm_settings()
+    model = settings.llm_model
+    try:
+        client = openrouter_client(settings)
+
+        reply = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "Reply with exactly one word: pong"}],
+            max_tokens=10,
+            temperature=0,
+        )
+        text = (reply.choices[0].message.content or "").strip()
+        if "pong" not in text.lower():
+            raise CheckError(f"Expected the reply 'pong', got {text!r}.")
+
+        tool_reply = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "What were total sales in EMEA?"}],
+            tools=[_SALES_TOOL],
+            max_tokens=100,
+            temperature=0,
+        )
+        calls = tool_reply.choices[0].message.tool_calls or []
+        if not calls:
+            raise CheckError(
+                f"'{model}' answered without calling the tool, so it is not suitable for the "
+                "agent. Pick a model that supports tool calling."
+            )
+        call = calls[0].function
+        args = json.loads(call.arguments or "{}")
+        if call.name != "get_sales" or args.get("region") != "EMEA":
+            raise CheckError(f"Tool call was wrong: {call.name}({args}).")
+    except openai.AuthenticationError:
+        raise CheckError("OpenRouter refused the key. Check OPENROUTER_API_KEY in .env.") from None
+    except openai.NotFoundError:
+        raise CheckError(
+            f"OpenRouter does not know the model '{model}'. Copy an exact id from "
+            "openrouter.ai/models into LLM_MODEL."
+        ) from None
+    except openai.APIStatusError as exc:
+        hint = " Your OpenRouter account may be out of credits." if exc.status_code == 402 else ""
+        raise CheckError(f"OpenRouter error {exc.status_code}: {exc.message}.{hint}") from None
+    except openai.APIConnectionError as exc:
+        raise CheckError(f"Could not reach OpenRouter at {settings.openrouter_base_url}: {exc}") from None
+    except json.JSONDecodeError:
+        raise CheckError("The model's tool call arguments were not valid JSON.") from None
+
+    used = (reply.usage.total_tokens if reply.usage else 0) + (
+        tool_reply.usage.total_tokens if tool_reply.usage else 0
+    )
+    return f"'{model}' replied {text!r} and called get_sales(region='EMEA'); {used} tokens used"
+
+
 CHECKS: dict[str, Callable[[], str]] = {
     "s3": check_s3,
     "s3vectors": check_s3_vectors,
     "kafka": check_kafka,
     "neo4j": check_neo4j,
     "embeddings": check_embeddings,
+    "llm": check_llm,
 }
 
 

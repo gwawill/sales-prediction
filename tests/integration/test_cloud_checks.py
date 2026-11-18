@@ -1,6 +1,7 @@
 from sales_poc.checks import (
     check_embeddings,
     check_kafka,
+    check_llm,
     check_neo4j,
     check_s3,
     check_s3_vectors,
@@ -25,3 +26,7 @@ def test_neo4j_login_and_query():
 
 def test_local_embeddings():
     assert "vectors of size 384" in check_embeddings()
+
+
+def test_llm_reply_and_tool_call():
+    assert "called get_sales" in check_llm()
