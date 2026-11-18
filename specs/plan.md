@@ -105,6 +105,7 @@ Transaction (one row per order line, after cleaning):
 | unit_price, discount_pct, total_amount | Money values in USD |
 | source | `batch` or `stream` |
 | ingested_at | When our pipeline received it |
+| quality_flags | List of values the ETL filled in, empty if none (FR-33) |
 | + joined fields | segment, region, category, product name, channel name |
 
 Target size: about 500 customers, 40 products and 25,000 to 30,000 transactions. This keeps
@@ -115,6 +116,18 @@ Neo4j inside the AuraDB Free limits.
 **Shared transform (FR-9).** All cleaning code lives in `etl/` as plain functions that take a
 pandas table and return a clean table, a quarantine table and counts. Neither pipeline has its
 own cleaning code. Because `etl/` touches no cloud service, it can be unit tested fully offline.
+
+**Missing values (FR-33).** The fill rules live in one table inside `etl/clean.py`, so they are
+easy to read and change. Each filled value adds a short tag to `quality_flags`, for example
+`discount_filled` or `channel_unknown`. A row is only quarantined when a required field is
+missing or a value is impossible, such as a negative quantity.
+
+**Daily batch files and schedule (FR-2, FR-34).** The generator writes one file per day, named
+`sales_YYYY-MM-DD.csv`, into a local `data/incoming/` folder. The batch command has two modes.
+`--once` loads all new files and stops. `--every N` repeats that every N minutes until stopped.
+To know which files are already loaded, it keeps a small list in S3 at
+`s3://<bucket>/state/batch_loaded.json`. Even if that list is lost, re-loading is safe because
+the load is idempotent (FR-17).
 
 **S3 layout (FR-8, FR-14, FR-16, FR-20).**
 
@@ -130,7 +143,9 @@ s3://<bucket>/forecasts/run=<run id>/forecast.parquet
 **Idempotent load (FR-12, FR-15, FR-17).** For each date touched by a run: read the existing
 clean file for that date, add the new rows, remove duplicates by `transaction_id`, and write the
 file back whole. Running twice gives the same file. A late event simply touches an older date.
-This read-merge-write approach is fine at PoC size and easy to explain.
+This read-merge-write approach is fine at PoC size and easy to explain. It would be too slow at
+real Dell scale, where a table format such as Apache Iceberg or Delta Lake with MERGE would be
+used instead. The README should say this honestly.
 
 **Stream delivery (FR-7).** The consumer collects events until it has N of them or T seconds
 pass, then runs ETL and writes to S3. It tells Kafka "done" (commits the offset) only after the

@@ -61,7 +61,8 @@ point back to it.
 ### Data generation
 
 - **FR-1 — Reference data.** Generate customers, products, regions and channels with stable IDs.
-- **FR-2 — Historical sales.** Generate about 12 months of past transactions as batch files.
+- **FR-2 — Historical sales.** Generate about 12 months of past transactions as batch files,
+  one file per day, the way a daily export from a sales system would look.
 - **FR-3 — Live orders.** Generate new orders one at a time and send them to Kafka as events.
 - **FR-4 — Realistic problems.** On purpose, include messy data so the ETL has real work to do:
   duplicate transactions, missing values, wrong formats (dates and amounts as odd strings),
@@ -72,6 +73,9 @@ point back to it.
 
 - **FR-6 — Batch ingestion.** A command uploads a batch file to the raw area of S3 and runs ETL
   on it.
+- **FR-34 — Scheduled batch.** The batch command can also run on a schedule (every N minutes).
+  Each time, it picks up only the daily files it has not loaded yet. This copies the "scheduled
+  batch loads, for example once a day" in `dell.md`.
 - **FR-7 — Stream ingestion.** A long-running consumer reads order events from Kafka and runs ETL
   on them in small groups (micro-batches).
 - **FR-8 — Raw copy kept.** Every input, batch or stream, is saved unchanged in the raw area
@@ -83,6 +87,15 @@ point back to it.
   results are the same no matter how the data arrived.
 - **FR-10 — Validation.** Check structure, data types, required fields and sensible ranges.
 - **FR-11 — Cleaning.** Fix formats that can be fixed safely (dates, currency strings, text case).
+- **FR-33 — Missing values filled or flagged.** As `dell.md` says, missing values are filled in
+  or flagged, not just rejected. The rules are:
+  - Missing `discount_pct` is filled with 0.
+  - Missing `channel_id` is set to "Unknown", and the row is flagged.
+  - Missing `unit_price` is filled with the product's list price, and the row is flagged.
+  - Missing `transaction_id`, `customer_id`, `product_id`, `event_time` or `quantity` cannot be
+    guessed safely, so the row goes to quarantine (FR-14).
+  Flagged rows stay in the clean data with a `quality_flags` field that lists what was filled.
+  The quality report counts them.
 - **FR-12 — Duplicates removed.** Remove duplicates using `transaction_id`. If the same ID
   arrives twice, keep one record.
 - **FR-13 — Joins.** Attach customer, product, region and channel details to each transaction.
@@ -103,8 +116,8 @@ point back to it.
 
 ### Data quality and monitoring
 
-- **FR-20 — Quality report.** Every ETL run writes a short report: rows in, rows clean, duplicates
-  removed, rows quarantined and why.
+- **FR-20 — Quality report.** Every ETL run writes a short report: rows in, rows clean, rows
+  clean but flagged, duplicates removed, rows quarantined and why.
 - **FR-21 — Reconciliation.** Each run checks that rows in = rows clean + duplicates + quarantined.
   If not, the run fails loudly.
 - **FR-22 — Logs.** All components write structured logs (one JSON object per line). This stands
@@ -155,7 +168,10 @@ The PoC is done when all of these pass on a fresh run:
 
 1. One command generates data, and the same seed gives the same files.
 2. The batch pipeline loads 12 months of history into S3, and the quality report adds up (FR-21).
-3. Running the batch pipeline a second time on the same file does not change the clean data.
+3. Running the batch pipeline a second time on the same files does not change the clean data.
+   In scheduled mode, a new daily file dropped in is picked up on the next run, and files
+   already loaded are skipped.
+3a. A row with only a missing discount or channel is kept and flagged, not quarantined.
 4. While the producer sends live orders, including duplicates and late events, the consumer
    loads them, and each transaction appears exactly once in the lake.
 5. The same transaction loaded by batch and by stream appears exactly once.

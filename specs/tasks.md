@@ -28,19 +28,19 @@ Done when: the script prints OK for every service.
 
 ## T2 — Data generator (FR-1 to FR-5)
 
-Generate reference data, 12 months of batch history with injected problems, and a function that
-makes one live order at a time.
+Generate reference data, 12 months of batch history as one file per day with injected problems,
+and a function that makes one live order at a time.
 
-Done when: unit tests show the same seed gives the same output, and that each kind of problem
-from FR-4 is present.
+Done when: unit tests show the same seed gives the same output, that there is one file per day,
+and that each kind of problem from FR-4 is present, including missing values.
 
-## T3 — Shared ETL transform (FR-9 to FR-15)
+## T3 — Shared ETL transform (FR-9 to FR-15, FR-33)
 
-Pure functions for validate, clean, dedupe, join and quarantine, returning clean rows, rejected
-rows with reasons, and counts.
+Pure functions for validate, clean, fill-or-flag missing values, dedupe, join and quarantine,
+returning clean rows (with `quality_flags`), rejected rows with reasons, and counts.
 
-Done when: unit tests cover every problem type from FR-4 and the reconciliation rule from FR-21.
-No network is used.
+Done when: unit tests cover every problem type from FR-4, every fill rule from FR-33, and the
+reconciliation rule from FR-21. No network is used.
 
 ## T4 — Data lake writer (FR-8, FR-16, FR-17, FR-20, FR-21)
 
@@ -49,12 +49,14 @@ read-merge-write idempotent load.
 
 Done when: an integration test writes the same rows twice and the clean files are unchanged.
 
-## T5 — Batch pipeline (FR-6)
+## T5 — Batch pipeline (FR-6, FR-34)
 
-A command that uploads a batch file to `raw/`, runs ETL and loads the lake.
+A command that uploads new daily files to `raw/`, runs ETL and loads the lake. It has a `--once`
+mode and a `--every N` scheduled mode, and remembers which files it has already loaded.
 
-Done when: 12 months of history load, the report adds up, and a second run changes nothing
-(acceptance checks 2 and 3).
+Done when: 12 months of history load, the report adds up, a second run changes nothing, and in
+scheduled mode a newly dropped daily file is picked up while old ones are skipped (acceptance
+checks 2, 3 and 3a).
 
 ## T6 — Stream producer (FR-3, FR-4)
 
