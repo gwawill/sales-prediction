@@ -66,7 +66,7 @@ SalesPrediction-dell/
   data/                  locally generated files (not committed)
   src/sales_poc/
     config.py            reads settings from .env
-    logging.py           JSON logging setup
+    log.py               JSON logging setup (not "logging.py", which would clash with Python's own module)
     datagen/             reference data, history, live orders
     etl/                 schema, validate, clean, dedupe, join (pure code, no cloud)
     lake/                S3 raw / clean / quarantine / reports read and write

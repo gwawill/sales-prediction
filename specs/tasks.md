@@ -17,7 +17,7 @@ Requirement IDs such as FR-12 point to `spec.md`. Design details are in `plan.md
   Done when: `pip install -e .[dev]` works.
 - **T0.2 — Settings.** `config.py` reading `.env`, plus `.env.example` listing every setting.
   Done when: a unit test loads settings from a sample env and fails clearly when one is missing.
-- **T0.3 — JSON logging.** `logging.py` that prints one JSON object per line.
+- **T0.3 — JSON logging.** `log.py` that prints one JSON object per line.
   Done when: a unit test checks a log line is valid JSON with time, level and message.
 - **T0.4 — Test setup.** pytest config with the `integration` marker skipped by default.
   Done when: `pytest` runs unit tests and skips integration tests.
