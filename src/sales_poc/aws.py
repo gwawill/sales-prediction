@@ -16,3 +16,8 @@ def session(settings: AwsSettings | None = None) -> boto3.Session:
 
 def s3_client(settings: AwsSettings | None = None):
     return session(settings).client("s3")
+
+
+def s3vectors_client(settings: AwsSettings | None = None):
+    """Amazon S3 Vectors, the vector store. Same region and credentials as S3."""
+    return session(settings).client("s3vectors")
