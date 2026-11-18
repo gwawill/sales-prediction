@@ -5,13 +5,15 @@ returns a short message. If something is wrong it raises an error that says what
 
 Run one or more checks (no name = all):
 
-    python -m sales_poc.checks s3
-    python -m sales_poc.checks s3 s3vectors
+    python scripts/check_cloud.py
+    python scripts/check_cloud.py s3 kafka
+    python -m sales_poc.checks s3          (same thing)
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -306,6 +308,9 @@ def check_embeddings() -> str:
             "built. Set EMBEDDING_PROVIDER=local in .env."
         )
 
+    # Windows can't make the file shortcuts the model cache prefers; it works without them,
+    # so hide the long warning about it.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
     from fastembed import TextEmbedding  # imported here: loading it takes a moment
 
     try:
@@ -434,19 +439,33 @@ CHECKS: dict[str, Callable[[], str]] = {
 
 
 def main(argv: list[str]) -> int:
+    """Run the named checks (or all), one line each, then a summary.
+
+    Exit code: 0 all passed, 1 at least one failed, 2 unknown check name.
+    """
     names = argv or list(CHECKS)
     unknown = [n for n in names if n not in CHECKS]
     if unknown:
         print(f"Unknown check: {', '.join(unknown)}. Choose from: {', '.join(CHECKS)}")
         return 2
 
-    failed = 0
+    failed: list[str] = []
     for name in names:
+        started = time.monotonic()
         try:
-            print(f"{name}: OK - {CHECKS[name]()}")
+            result = CHECKS[name]()
+            status = f"OK - {result}"
         except (CheckError, ConfigError) as exc:
-            failed += 1
-            print(f"{name}: FAILED - {exc}")
+            failed.append(name)
+            status = f"FAILED - {exc}"
+        except Exception as exc:  # noqa: BLE001 - one broken check must not stop the others
+            failed.append(name)
+            status = f"FAILED (unexpected {type(exc).__name__}) - {exc}"
+        print(f"{name}: {status} [{time.monotonic() - started:.1f}s]", flush=True)
+
+    passed = len(names) - len(failed)
+    summary = f"{passed}/{len(names)} checks passed"
+    print(summary + (f". Failed: {', '.join(failed)}" if failed else "."))
     return 1 if failed else 0
 
 
