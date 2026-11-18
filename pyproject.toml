@@ -9,7 +9,9 @@ description = "Proof of concept of a Dell-style sales prediction AI platform (se
 readme = "dell.md"
 requires-python = ">=3.11"
 # Runtime libraries are added in the subtask that first needs them.
-dependencies = []
+dependencies = [
+    "pydantic-settings>=2.4",
+]
 
 [project.optional-dependencies]
 dev = [
