@@ -17,5 +17,15 @@ dev = [
     "pytest>=8",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: talks to real cloud services or the real .env; run with: pytest -m integration",
+]
+# - Integration tests are left out unless asked for. A "-m" given on the command line
+#   replaces this one, so "pytest -m integration" runs them.
+# - The cache plugin is turned off because Windows blocks the folder rename it does here.
+addopts = "-m 'not integration' -p no:cacheprovider"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/sales_poc"]
