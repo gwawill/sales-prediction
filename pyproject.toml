@@ -16,6 +16,8 @@ dependencies = [
     "certifi>=2024.2.2",
     "fastembed>=0.4",
     "openai>=1.50",
+    "pandas>=2.2",
+    "faker>=30",
 ]
 
 [project.optional-dependencies]
