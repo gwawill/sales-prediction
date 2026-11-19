@@ -142,6 +142,16 @@ def write_clean(store: ObjectStore, rows: pd.DataFrame, workers: int = 1) -> lis
         return list(pool.map(lambda g: _write_day(store, *g), groups))
 
 
+def read_all_clean(store: ObjectStore, workers: int = 16) -> pd.DataFrame:
+    """Every clean row in the lake, oldest day first. Days are read in parallel."""
+    days = list_clean_days(store)
+    if not days:
+        return _typed(pd.DataFrame(columns=OUTPUT_COLUMNS))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        tables = list(pool.map(lambda d: read_clean_day(store, d), days))
+    return pd.concat(tables, ignore_index=True)
+
+
 def list_clean_days(store: ObjectStore) -> list[date]:
     days = []
     for key in store.list(CLEAN_PREFIX):

@@ -79,3 +79,43 @@ def test_a_customer_who_moves_region_keeps_only_the_new_link(drv):
         assert [r["r"] for r in records] == ["EMEA"]
     finally:
         drv.execute_query("MATCH (c:Customer {customer_id: '_TEST_C'}) DETACH DELETE c")
+
+
+def _test_tx(**changes):
+    row = {
+        "transaction_id": "_TEST_TX", "customer_id": "C00001", "product_id": "P0001",
+        "channel_id": "ONLINE", "event_time": "2026-03-01T10:00:00+00:00", "event_date": "2026-03-01",
+        "quantity": 1, "unit_price": 10.0, "discount_pct": 0.0, "total_amount": 10.0,
+        "source": "batch", "quality_flags": "",
+    }
+    return {**row, **changes}
+
+
+def _links(drv):
+    records, _, _ = drv.execute_query("""
+        MATCH (t:Transaction {transaction_id: '_TEST_TX'})
+        RETURN [(c:Customer)-[:MADE]->(t) | c.customer_id] AS customers,
+               [(t)-[:FOR]->(p:Product) | p.product_id] AS products,
+               [(t)-[:VIA]->(ch:Channel) | ch.channel_id] AS channels,
+               t.quantity AS quantity, toString(t.event_date) AS day
+    """)
+    return dict(records[0])
+
+
+def test_a_transaction_gets_one_link_of_each_kind_and_corrections_move_them(drv):
+    from sales_poc.graph.loader import TRANSACTIONS_CYPHER
+
+    load_reference(drv, load_reference_data(get_app_settings().data_dir / "reference"))
+    try:
+        drv.execute_query(TRANSACTIONS_CYPHER, rows=[_test_tx()])
+        drv.execute_query(TRANSACTIONS_CYPHER, rows=[_test_tx()])  # again: no change
+        assert _links(drv) == {"customers": ["C00001"], "products": ["P0001"], "channels": ["ONLINE"],
+                               "quantity": 1, "day": "2026-03-01"}
+
+        # A corrected copy: different customer, product, channel and quantity.
+        drv.execute_query(TRANSACTIONS_CYPHER, rows=[_test_tx(
+            customer_id="C00002", product_id="P0002", channel_id="UNKNOWN", quantity=3)])
+        assert _links(drv) == {"customers": ["C00002"], "products": ["P0002"], "channels": ["UNKNOWN"],
+                               "quantity": 3, "day": "2026-03-01"}
+    finally:
+        drv.execute_query("MATCH (t:Transaction {transaction_id: '_TEST_TX'}) DETACH DELETE t")
