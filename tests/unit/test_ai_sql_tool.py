@@ -142,3 +142,10 @@ def test_the_columns_match_the_lake():
 
 def test_no_files_were_left_behind():
     assert not Path("leak.csv").exists() and not Path("other.db").exists()
+
+
+def test_times_are_shown_in_utc():
+    frame = pd.DataFrame({"transaction_id": ["T1"],
+                          "ingested_at": pd.to_datetime(["2026-11-19 02:29:01"], utc=True)})
+    text = SqlTool(rows=frame).run("SELECT ingested_at FROM sales").to_text()
+    assert "2026-11-19 02:29:01+00:00" in text

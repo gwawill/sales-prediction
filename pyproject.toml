@@ -35,6 +35,7 @@ forecast-run = "sales_poc.forecast.publish:main"
 rag-ask = "sales_poc.ai.rag:main"
 sql-query = "sales_poc.ai.tools.sql:main"
 graph-query = "sales_poc.ai.tools.graph:main"
+agent-ask = "sales_poc.ai.agent:main"
 
 [project.optional-dependencies]
 dev = [

@@ -118,6 +118,7 @@ def locked_connection(rows: pd.DataFrame) -> duckdb.DuckDBPyConnection:
     con.unregister("incoming")
     if "event_date" in frame:
         con.execute(f"ALTER TABLE {TABLE} ALTER event_date TYPE DATE")
+    con.execute("SET TimeZone = 'UTC'")    # show times in UTC, not this PC's local time
     con.execute("SET python_enable_replacements = false")
     con.execute("SET enable_external_access = false")
     con.execute("SET lock_configuration = true")

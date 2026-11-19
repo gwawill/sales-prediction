@@ -114,3 +114,14 @@ def test_problems_become_plain_english_errors(error, message):
 def test_an_empty_reply_is_an_error():
     with pytest.raises(LlmError, match="empty"):
         Llm(settings(), FakeOpenRouter(NS(choices=[], usage=None))).chat([{"role": "user", "content": "q"}])
+
+
+def test_tool_choice_is_sent_only_with_tools():
+    fake = FakeOpenRouter(response(), response())
+    llm = Llm(settings(), fake)
+    tools = [{"type": "function", "function": {"name": "t", "parameters": {}}}]
+    llm.chat([{"role": "user", "content": "q"}], tools=tools, tool_choice="none")
+    llm.chat([{"role": "user", "content": "q"}], tool_choice="none")
+
+    assert fake.requests[0]["tool_choice"] == "none"
+    assert "tool_choice" not in fake.requests[1]

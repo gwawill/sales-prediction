@@ -95,8 +95,10 @@ class Llm:
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        tool_choice: str | None = None,
     ) -> Reply:
-        """Send messages (and optional tool definitions); get one reply back."""
+        """Send messages (and optional tool definitions); get one reply back.
+        tool_choice="none" shows the tools but asks for a written answer instead of a call."""
         request = {
             "model": self.model,
             "messages": messages,
@@ -105,6 +107,8 @@ class Llm:
         }
         if tools:
             request["tools"] = tools
+            if tool_choice:
+                request["tool_choice"] = tool_choice
         try:
             response = self.client.chat.completions.create(**request)
         except openai.AuthenticationError:
