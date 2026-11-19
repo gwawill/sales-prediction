@@ -1,13 +1,16 @@
-"""Turn raw text into clean, typed values (FR-11).
+"""Cleaning: fix formats (FR-11), then fill or flag missing values (FR-33).
 
-Raw rows come from CSV files or Kafka messages: every value is text or empty. This step
-fixes formats that can be fixed safely and turns the text into real types (CLEAN_SCHEMA).
+1. `clean_formats`: raw rows come from CSV files or Kafka messages, where every value is
+   text or empty. It fixes formats that can be fixed safely and turns the text into real
+   types (CLEAN_SCHEMA). For each row it records:
+     - fixes:       what it changed, e.g. "fixed:event_time" (counted in the quality report)
+     - unparseable: values that were present but could not be understood, e.g.
+                    "unparseable:quantity". Those become empty, and the quarantine step
+                    (T3.6) uses the note to explain why.
 
-For each row it also records:
-  - fixes:       what it changed, e.g. "fixed:event_time" (counted in the quality report)
-  - unparseable: values that were present but could not be understood, e.g.
-                 "unparseable:quantity". Those values become empty, and the quarantine
-                 step (T3.6) uses this note to explain why.
+2. `fill_missing`: fills the few missing values that can be filled safely (FILL_RULES) and
+   flags each row with what was filled (quality_flags). Values that cannot be guessed are
+   left missing, so validation rejects the row.
 """
 
 from __future__ import annotations
@@ -27,6 +30,18 @@ OTHER_TIME_FORMATS = [
 
 MONEY_COLUMNS = ["unit_price", "total_amount", "discount_pct"]
 UPPERCASE_COLUMNS = ["customer_id", "product_id", "channel_id", "currency"]
+
+# The channel code used when the channel is missing. The join step names it "Unknown".
+UNKNOWN_CHANNEL = "UNKNOWN"
+
+# FR-33: which missing values may be filled, with what, and the flag added to the row.
+# "list_price" means: the product's list price from the reference data.
+# Every other missing value cannot be guessed safely, so validation rejects the row.
+FILL_RULES: dict[str, tuple[object, str]] = {
+    "discount_pct": (0.0, "discount_filled"),
+    "channel_id": (UNKNOWN_CHANNEL, "channel_unknown"),
+    "unit_price": ("list_price", "unit_price_filled"),
+}
 
 
 @dataclass(frozen=True)
@@ -111,4 +126,33 @@ def clean_formats(raw: pd.DataFrame) -> FormatResult:
         rows=out,
         fixes=_join_notes(raw.index, fixes).rename("fixes"),
         unparseable=_join_notes(raw.index, unparseable).rename("unparseable"),
+    )
+
+
+@dataclass(frozen=True)
+class FillResult:
+    rows: pd.DataFrame        # same shape and types as the input, with values filled
+    quality_flags: pd.Series  # per row, "; "-joined flags like "discount_filled"
+
+
+def fill_missing(rows: pd.DataFrame, products: pd.DataFrame) -> FillResult:
+    """Apply FILL_RULES to typed rows (the output of `clean_formats`).
+
+    `products` is the reference table with `product_id` and `list_price`. The input table
+    is not changed.
+    """
+    filled = rows.copy()
+    flags: list[tuple[pd.Series, str]] = []
+    list_price = filled["product_id"].map(products.set_index("product_id")["list_price"])
+
+    for column, (value, flag) in FILL_RULES.items():
+        was_missing = filled[column].isna()
+        replacement = list_price if value == "list_price" else value
+        filled[column] = filled[column].fillna(replacement).astype(rows[column].dtype)
+        # Only flag rows that really got a value (a list price may not exist).
+        flags.append((was_missing & filled[column].notna(), flag))
+
+    return FillResult(
+        rows=filled,
+        quality_flags=_join_notes(rows.index, flags).rename("quality_flags"),
     )
