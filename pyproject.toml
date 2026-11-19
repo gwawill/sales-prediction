@@ -21,6 +21,8 @@ dependencies = [
     "pyarrow>=17",
     "statsmodels>=0.14",
     "duckdb>=1.5",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -36,6 +38,7 @@ rag-ask = "sales_poc.ai.rag:main"
 sql-query = "sales_poc.ai.tools.sql:main"
 graph-query = "sales_poc.ai.tools.graph:main"
 agent-ask = "sales_poc.ai.agent:main"
+api-serve = "sales_poc.api.app:main"
 
 [project.optional-dependencies]
 dev = [

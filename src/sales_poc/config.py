@@ -125,6 +125,8 @@ class AppSettings(_GroupSettings):
     random_seed: int = 42
     stream_batch_size: int = Field(default=100, gt=0)
     stream_batch_seconds: float = Field(default=10.0, gt=0)
+    api_host: str = "127.0.0.1"   # only this PC can reach the API; there is no login (spec: out of scope)
+    api_port: int = Field(default=8000, gt=0, lt=65536)
 
 
 ALL_GROUPS: tuple[type[_GroupSettings], ...] = (
