@@ -20,6 +20,7 @@ dependencies = [
     "faker>=30",
     "pyarrow>=17",
     "statsmodels>=0.14",
+    "duckdb>=1.5",
 ]
 
 [project.scripts]
@@ -32,6 +33,7 @@ vector-load = "sales_poc.vectors.store:load_main"
 vector-search = "sales_poc.vectors.store:search_main"
 forecast-run = "sales_poc.forecast.publish:main"
 rag-ask = "sales_poc.ai.rag:main"
+sql-query = "sales_poc.ai.tools.sql:main"
 
 [project.optional-dependencies]
 dev = [
