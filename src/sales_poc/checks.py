@@ -13,7 +13,6 @@ Run one or more checks (no name = all):
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 import uuid
@@ -38,6 +37,7 @@ from sales_poc.config import (
     get_vector_store_settings,
 )
 from sales_poc.graph.connection import driver as neo4j_driver
+from sales_poc.vectors.embeddings import Embedder, EmbeddingError
 from sales_poc.kafka import KafkaSetupError, connection_config, login_method
 
 
@@ -302,43 +302,16 @@ def check_embeddings() -> str:
     unrelated one. That shows the model is really working, not just returning numbers.
     """
     settings = get_embedding_settings()
-    if settings.embedding_provider != "local":
-        raise CheckError(
-            f"EMBEDDING_PROVIDER is '{settings.embedding_provider}', but only 'local' is "
-            "built. Set EMBEDDING_PROVIDER=local in .env."
-        )
-
-    # Windows can't make the file shortcuts the model cache prefers; it works without them,
-    # so hide the long warning about it.
-    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-    from fastembed import TextEmbedding  # imported here: loading it takes a moment
-
-    try:
-        model = TextEmbedding(
-            model_name=settings.embedding_model,
-            cache_dir=str(settings.embedding_cache_dir),
-        )
-    except ValueError as exc:
-        raise CheckError(f"fastembed does not know EMBEDDING_MODEL: {exc}") from None
-    except Exception as exc:  # noqa: BLE001 - download or file problems come in many types
-        raise CheckError(
-            f"Could not load '{settings.embedding_model}' into {settings.embedding_cache_dir}/ "
-            f"(the first run downloads it, so it needs internet): {exc}"
-        ) from None
-
     texts = [
         "Laptop sales in EMEA grew in March.",
         "In March, notebook computer revenue rose in Europe.",
         "The office coffee machine is broken.",
     ]
-    vectors = [list(v) for v in model.embed(texts)]
+    try:
+        vectors = Embedder(settings).embed_documents(texts)
+    except EmbeddingError as exc:
+        raise CheckError(str(exc)) from None
 
-    sizes = {len(v) for v in vectors}
-    if sizes != {settings.embedding_dim}:
-        raise CheckError(
-            f"The model makes vectors of size {sizes}, but EMBEDDING_DIM is "
-            f"{settings.embedding_dim}. Make them match in .env."
-        )
     related = _cosine(vectors[0], vectors[1])
     unrelated = _cosine(vectors[0], vectors[2])
     if related <= unrelated:
