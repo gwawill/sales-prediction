@@ -124,7 +124,9 @@ adds no copies.
 ## T10 — Forecasting (FR-23 to FR-25)
 
 - **T10.1 — Weekly aggregation.** Sales per category, region and week.
-- **T10.2 — Models.** Holt-Winters and the 4-week-average baseline.
+- **T10.2 — Models.** The 4-week-average baseline plus three exponential smoothing models:
+  simple, Holt (damped trend) and Holt-Winters (damped trend + 13-week season). T10.3 picks the
+  best per series by measured error.
 - **T10.3 — Evaluation.** Error on the last 4 held-back weeks, for both.
 - **T10.4 — Save forecast.** Write to `forecasts/` in S3.
 

@@ -19,6 +19,7 @@ dependencies = [
     "pandas>=2.2",
     "faker>=30",
     "pyarrow>=17",
+    "statsmodels>=0.14",
 ]
 
 [project.scripts]
