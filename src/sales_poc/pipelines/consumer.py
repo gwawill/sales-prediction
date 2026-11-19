@@ -1,7 +1,7 @@
-"""Stream consumer: read orders from Kafka in micro-batches (FR-7).
+"""Stream consumer: read orders from Kafka in micro-batches and load them (FR-7).
 
-A micro-batch ends at STREAM_BATCH_SIZE messages or after STREAM_BATCH_SECONDS, whichever
-comes first. For each batch:
+Reading (task T7.1). A micro-batch ends at STREAM_BATCH_SIZE messages or after
+STREAM_BATCH_SECONDS, whichever comes first. For each batch:
   - every message value is kept as-is, for the raw area (FR-8),
   - order messages become rows with the daily-file columns, ready for the shared ETL,
   - health-check messages (key "healthcheck", left by the T1.3 cloud check) are skipped,
@@ -11,6 +11,13 @@ comes first. For each batch:
   - the positions to confirm to Kafka afterwards are worked out (used in task T7.3).
 
 The "generator-problem" header is never read here: a real source would not have it.
+
+Loading (task T7.2), `process_batch`, for every non-empty batch:
+    1. save the message values unchanged to raw/stream/date=<received>/<batch id>.jsonl
+    2. run the shared ETL with source="stream"                          (FR-9)
+    3. merge clean rows into the lake; late orders land on their real day (FR-15)
+    4. write this batch's quarantine file and report, with a "stream" section
+An empty batch writes nothing, so an idle consumer does not fill the bucket.
 """
 
 from __future__ import annotations
@@ -19,13 +26,25 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import pandas as pd
 from confluent_kafka import Consumer, TopicPartition
 
 from sales_poc.config import KafkaSettings, get_kafka_settings
 from sales_poc.datagen.history import COLUMNS
+from sales_poc.datagen.reference import ReferenceData
+from sales_poc.etl.pipeline import run_etl
 from sales_poc.kafka import connection_config
+from sales_poc.lake.clean import write_clean
+from sales_poc.lake.raw import save_raw_stream_batch
+from sales_poc.lake.runs import build_report, new_run_id, write_quarantine, write_report
+from sales_poc.lake.store import ObjectStore
+from sales_poc.log import get_logger
+
+log = get_logger(__name__)
+
+LOAD_WORKERS = 8
 
 HEALTHCHECK_KEY = b"healthcheck"
 
@@ -137,3 +156,47 @@ def build_batch(messages: list) -> MicroBatch:
 
 def read_batch(consumer, max_messages: int, max_seconds: float) -> MicroBatch:
     return build_batch(collect_messages(consumer, max_messages, max_seconds))
+
+
+class StreamCountError(RuntimeError):
+    """Messages in a batch do not add up to order rows + health checks + unreadable."""
+
+
+def process_batch(
+    store: ObjectStore,
+    batch: MicroBatch,
+    ref: ReferenceData,
+    now: datetime | None = None,
+) -> dict | None:
+    """Save, clean and load one micro-batch. Returns its report, or None if it was empty."""
+    if batch.size == 0:
+        return None
+    if len(batch.rows) + batch.healthchecks + batch.unreadable != batch.size:
+        raise StreamCountError(
+            f"Batch {batch.batch_id}: {batch.size} messages, but {len(batch.rows)} rows + "
+            f"{batch.healthchecks} health checks + {batch.unreadable} unreadable."
+        )
+
+    received = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    run_id = new_run_id("stream", received)
+
+    raw_key, _ = save_raw_stream_batch(store, batch.values, received.date(), batch.batch_id)
+    result = run_etl(batch.rows, ref, source="stream", ingested_at=received)
+    merges = write_clean(store, result.clean, workers=LOAD_WORKERS)
+    q_key = write_quarantine(store, run_id, result.quarantine)
+
+    report = build_report(
+        run_id, "stream", received, datetime.now(timezone.utc), [raw_key], result.counts, merges, q_key
+    )
+    report["stream"] = {
+        "batch_id": batch.batch_id,
+        "messages": batch.size,
+        "order_rows": len(batch.rows),
+        "healthchecks": batch.healthchecks,
+        "unreadable": batch.unreadable,
+    }
+    write_report(store, report)
+    log.info("stream_batch_loaded", extra={"run_id": run_id, "batch_id": batch.batch_id,
+                                           "messages": batch.size, "clean": result.counts.clean,
+                                           "quarantined": result.counts.quarantined})
+    return report
