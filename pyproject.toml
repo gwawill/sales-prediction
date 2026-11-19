@@ -30,6 +30,7 @@ stream-consume = "sales_poc.pipelines.consumer:main"
 graph-load = "sales_poc.graph.loader:main"
 vector-load = "sales_poc.vectors.store:load_main"
 vector-search = "sales_poc.vectors.store:search_main"
+forecast-run = "sales_poc.forecast.publish:main"
 
 [project.optional-dependencies]
 dev = [

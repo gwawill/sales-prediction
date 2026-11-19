@@ -178,10 +178,14 @@ lake, not raw rows. For example: one per category, region and month, and one per
 summary is stored with metadata (region, category, month, segment) so search can be filtered.
 The summary's ID is built from its keys, so re-loading overwrites instead of duplicating.
 
-**Forecast (FR-23 to FR-25).** Group clean sales into weekly totals per category and region. Fit
-Holt-Winters, and also a simple "same as last 4 weeks average" baseline. Hold back the last 4
-weeks to measure error (MAPE, the average percent error). Report both, so it is clear whether the
-model beats the baseline.
+**Forecast (FR-23 to FR-25).** Group clean sales into weekly totals per category and region
+(complete Monday-to-Sunday weeks only). Fit a "last 4 weeks average" baseline and three
+exponential smoothing models: simple, Holt (damped trend) and Holt-Winters (damped trend +
+13-week season). Measure error with a rolling backtest: the last 3 windows of 4 weeks, each
+model trained only on the weeks before each window (decided in T10.3, so one lucky window
+cannot pick the winner). The best model per series is chosen by WAPE (total error / total
+sales), because MAPE cannot handle weeks with zero sales; MAPE is still reported where it can
+be calculated.
 
 **AI layer (FR-26 to FR-30).**
 
