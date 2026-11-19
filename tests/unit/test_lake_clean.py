@@ -138,6 +138,16 @@ def test_late_rows_go_into_the_older_day(store, clean):
     assert "TX-LATE-1" in set(read_clean_day(store, old_day)["transaction_id"])
 
 
+def test_parallel_writing_gives_the_same_result(tmp_path, clean):
+    one, many = LocalStore(tmp_path / "one"), LocalStore(tmp_path / "many")
+
+    serial = write_clean(one, clean)
+    parallel = write_clean(many, clean, workers=8)
+
+    assert parallel == serial  # same summaries, oldest day first
+    assert file_bytes(many) == file_bytes(one)
+
+
 def test_reading_a_missing_day_gives_an_empty_typed_table(store):
     empty = read_clean_day(store, date(2020, 1, 1))
     assert len(empty) == 0

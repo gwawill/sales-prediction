@@ -21,6 +21,7 @@ Apache Iceberg or Delta Lake (see plan.md).
 from __future__ import annotations
 
 import io
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
 
@@ -116,19 +117,29 @@ def merge_day(existing: pd.DataFrame, new: pd.DataFrame, day: date) -> tuple[pd.
     return _typed(merged), summary
 
 
-def write_clean(store: ObjectStore, rows: pd.DataFrame) -> list[DayMerge]:
-    """Merge clean rows (output of run_etl) into the lake, one day at a time."""
+def _write_day(store: ObjectStore, day: date, day_rows: pd.DataFrame) -> DayMerge:
+    existing = read_clean_day(store, day)
+    merged, summary = merge_day(existing, day_rows, day)
+    if summary.written:
+        store.put(clean_key(day), to_parquet_bytes(merged))
+    return summary
+
+
+def write_clean(store: ObjectStore, rows: pd.DataFrame, workers: int = 1) -> list[DayMerge]:
+    """Merge clean rows (output of run_etl) into the lake, one day at a time.
+
+    Each day is its own file, so days are independent. `workers` > 1 handles several days
+    at once, which matters on S3 where every request waits on the network. Results are
+    always returned oldest day first.
+    """
     if rows["transaction_id"].duplicated().any():
         raise ValueError("Rows to write must have unique transaction IDs (run remove_duplicates first).")
 
-    results = []
-    for day, day_rows in rows.groupby("event_date", sort=True):
-        existing = read_clean_day(store, day)
-        merged, summary = merge_day(existing, day_rows, day)
-        if summary.written:
-            store.put(clean_key(day), to_parquet_bytes(merged))
-        results.append(summary)
-    return results
+    groups = list(rows.groupby("event_date", sort=True))
+    if workers <= 1:
+        return [_write_day(store, day, day_rows) for day, day_rows in groups]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(lambda g: _write_day(store, *g), groups))
 
 
 def list_clean_days(store: ObjectStore) -> list[date]:

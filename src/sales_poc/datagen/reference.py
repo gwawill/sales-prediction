@@ -11,6 +11,7 @@ transaction generated later can safely point at a customer or product by its ID.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -121,6 +122,21 @@ def build_customers(rng: np.random.Generator, fake: Faker, n_customers: int) -> 
     return pd.DataFrame(
         rows, columns=["customer_id", "customer_name", "segment", "region_id", "country"]
     )
+
+
+REFERENCE_TABLES = ("regions", "channels", "products", "customers")
+
+
+def load_reference_data(directory: Path) -> ReferenceData:
+    """Read the four tables written by generate-data (data/reference/*.csv)."""
+    tables = {}
+    for name in REFERENCE_TABLES:
+        path = Path(directory) / f"{name}.csv"
+        if not path.is_file():
+            raise FileNotFoundError(f"{path} not found. Run generate-data first.")
+        # Only truly empty cells are missing: "NA" is the North America region code.
+        tables[name] = pd.read_csv(path, keep_default_na=False, na_values=[""])
+    return ReferenceData(**tables)
 
 
 def build_reference_data(seed: int = 42, n_customers: int = 500) -> ReferenceData:

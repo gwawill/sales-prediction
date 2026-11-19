@@ -25,9 +25,7 @@ import pandas as pd
 from sales_poc.config import get_app_settings
 from sales_poc.datagen.history import DEFAULT_DAYS, DEFAULT_START, generate_history, write_daily_files
 from sales_poc.datagen.problems import add_problems
-from sales_poc.datagen.reference import build_reference_data
-
-REFERENCE_TABLES = ("regions", "channels", "products", "customers")
+from sales_poc.datagen.reference import REFERENCE_TABLES, build_reference_data
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
