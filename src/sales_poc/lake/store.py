@@ -10,10 +10,12 @@ it gets. Keys are S3-style paths like "raw/batch/sales_2026-03-01.csv".
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Protocol
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import (ClientError, ConnectionClosedError, IncompleteReadError, ReadTimeoutError,
+                                 ResponseStreamingError)
 
 from sales_poc.aws import s3_client
 from sales_poc.config import AwsSettings, get_aws_settings
@@ -62,6 +64,12 @@ class LocalStore:
         self._path(key).unlink(missing_ok=True)
 
 
+GET_ATTEMPTS = 3
+GET_RETRY_SECONDS = 1.0      # wait 1s, then 2s, between tries
+# Errors that mean the download broke while reading the body, not that the file is missing.
+BROKEN_DOWNLOAD = (ReadTimeoutError, ResponseStreamingError, IncompleteReadError, ConnectionClosedError)
+
+
 class S3Store:
     """One S3 bucket, optionally limited to keys under `prefix`."""
 
@@ -77,12 +85,19 @@ class S3Store:
         self.client.put_object(Bucket=self.bucket, Key=self._key(key), Body=data)
 
     def get(self, key: str) -> bytes:
-        try:
-            return self.client.get_object(Bucket=self.bucket, Key=self._key(key))["Body"].read()
-        except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
-                raise KeyError(key) from None
-            raise
+        """The file's bytes. A download that stalls or breaks halfway is tried again: boto3
+        retries the request itself, but not the reading of the file once it has started."""
+        for attempt in range(1, GET_ATTEMPTS + 1):
+            try:
+                return self.client.get_object(Bucket=self.bucket, Key=self._key(key))["Body"].read()
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+                    raise KeyError(key) from None
+                raise
+            except BROKEN_DOWNLOAD:
+                if attempt == GET_ATTEMPTS:
+                    raise
+                time.sleep(GET_RETRY_SECONDS * attempt)
 
     def exists(self, key: str) -> bool:
         try:
