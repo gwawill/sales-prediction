@@ -166,6 +166,13 @@ client key). They live in `secrets/` and their paths are settings in `.env`.
 Every node has a uniqueness constraint on its ID, and the loader uses `MERGE`, so re-loading does
 not create copies.
 
+**Hybrid search (decided in T9.3).** Plain search by meaning put the wrong category first (for
+"laptop sales in EMEA" it returned an Accessory summary first), because every summary shares one
+sentence pattern. So `search` takes the 30 closest summaries by meaning, then ranks results
+higher for each label the question names (category, region, month, segment, customer). On five
+test questions the right summary came first 5/5 times, against 2/5 for plain search. Code:
+`vectors/hybrid.py`. `vector-search --plain` shows plain search for comparison.
+
 **Vector documents (FR-19).** The vector store holds short text summaries built from the clean
 lake, not raw rows. For example: one per category, region and month, and one per customer. Each
 summary is stored with metadata (region, category, month, segment) so search can be filtered.

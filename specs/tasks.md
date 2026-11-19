@@ -116,6 +116,7 @@ Done when: a re-load does not change node counts, and acceptance check 6 passes.
 - **T9.1 — Summary builder.** Text summaries from the clean lake, with metadata.
 - **T9.2 — Embeddings.** Wrapper for the chosen embedding model.
 - **T9.3 — Load and search.** Put vectors in S3 Vectors with stable IDs, and a search function.
+  Search is hybrid: meaning first, then labels named in the question (see plan.md).
 
 Done when: searching "laptop sales in EMEA" returns EMEA laptop summaries first, and a re-load
 adds no copies.
