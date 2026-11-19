@@ -12,6 +12,14 @@ from sales_poc.datagen.reference import build_reference_data
 from sales_poc.etl.pipeline import run_etl
 from sales_poc.lake.clean import list_clean_days, read_clean_day, write_clean
 from sales_poc.lake.raw import RawConflictError, save_raw_batch_file, save_raw_stream_batch
+from sales_poc.lake.runs import (
+    build_report,
+    latest_report,
+    new_run_id,
+    read_quarantine,
+    write_quarantine,
+    write_report,
+)
 from sales_poc.lake.store import s3_store
 
 
@@ -72,3 +80,19 @@ def test_clean_rows_written_twice_leave_the_files_unchanged(store):
     stored = pd.concat([read_clean_day(store, d) for d in list_clean_days(store)])
     assert len(stored) == len(first.clean)
     assert stored["transaction_id"].is_unique
+
+
+def test_quarantine_and_report_on_s3(store):
+    ref = build_reference_data(seed=42)
+    messy = add_problems(generate_history(ref, seed=42, start=date(2026, 3, 1), days=20), seed=42)
+    raw = pd.concat([messy.files[d] for d in sorted(messy.files)], ignore_index=True)
+    started = datetime(2026, 11, 18, 9, tzinfo=timezone.utc)
+    result = run_etl(raw, ref, "batch", ingested_at=started)
+    run_id = new_run_id("batch", started)
+
+    q_key = write_quarantine(store, run_id, result.quarantine)
+    report = build_report(run_id, "batch", started, started, [], result.counts, [], q_key)
+    write_report(store, report)
+
+    assert len(read_quarantine(store, run_id)) == result.counts.quarantined > 0
+    assert latest_report(store) == report
