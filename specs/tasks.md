@@ -168,7 +168,5 @@ Done when: the page loads and shows real data from the lake.
 
 - **T15.1 — Demo script.** `scripts/demo.py` runs the acceptance checks in order.
 - **T15.2 — README.** Setup and run steps, plus honest notes on what differs from real scale.
-- **T15.3 — Interview map.** A short note linking each PoC part to the matching section of
-  `dell.md`.
 
 Done when: a fresh run of the demo script passes every acceptance check.
