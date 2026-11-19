@@ -56,8 +56,6 @@ def page() -> None:
         st.header("Settings")
         api_url = st.text_input("Web API address", os.environ.get(API_URL_ENV, "http://127.0.0.1:8000"),
                                 help="Where api-serve is running. Only the question box uses it.")
-        mode = st.radio("Answer questions with", ["agent", "rag"],
-                        captions=["uses SQL, graph, search and forecast tools", "summaries only, faster"])
         if st.button("Reload data"):
             st.cache_data.clear()
             st.cache_resource.clear()
@@ -116,13 +114,15 @@ def page() -> None:
 
     # --- question box ----------------------------------------------------------------------
     st.subheader("Ask a question")
+    st.caption("Answered by the AI agent, which can query the orders, the graph, the monthly summaries "
+               "and the forecast. It lists the sources it used.")
     with st.form("ask"):
         question = st.text_area("Question", placeholder="Which enterprise customers who bought servers "
                                 "also bought storage?", max_chars=1000)
         submitted = st.form_submit_button("Ask")
     if submitted and question.strip():
         with st.spinner("Thinking... the agent may run a few queries."):
-            answer = ask_api(api_url, question.strip(), mode)
+            answer = ask_api(api_url, question.strip())   # the agent (the API's default mode)
         if not answer.ok:
             st.error(answer.detail)
         else:
