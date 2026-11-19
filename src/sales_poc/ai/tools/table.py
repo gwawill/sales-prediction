@@ -20,10 +20,12 @@ class Table:
     columns: list[str]
     rows: list[tuple]
     truncated: bool          # True if there were more rows than the tool returns
+    note: str = ""           # optional line shown above the table, e.g. how to read a column
 
     def to_text(self) -> str:
         """A compact table for the model to read."""
-        lines = [" | ".join(self.columns)]
+        lines = [self.note] if self.note else []
+        lines.append(" | ".join(self.columns))
         lines += [" | ".join(cell(v) for v in row) for row in self.rows]
         if not self.rows:
             lines.append("(no rows)")

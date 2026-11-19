@@ -32,6 +32,7 @@ import threading
 import duckdb
 import pandas as pd
 
+from sales_poc.ai.tools import ToolError
 from sales_poc.ai.tools.table import Table
 
 SqlResult = Table   # the name used before the table was shared with graph_query
@@ -86,7 +87,7 @@ TOOL_SPEC = {
 }
 
 
-class SqlToolError(ValueError):
+class SqlToolError(ToolError):
     """The query was refused or failed. The message is meant to be shown to the model."""
 
 

@@ -27,6 +27,7 @@ from neo4j import Query, unit_of_work
 from neo4j.exceptions import ClientError, CypherSyntaxError, Neo4jError
 from neo4j.graph import Node, Path, Relationship
 
+from sales_poc.ai.tools import ToolError
 from sales_poc.ai.tools.table import Table
 
 MAX_ROWS = 50
@@ -66,7 +67,7 @@ TOOL_SPEC = {
 }
 
 
-class GraphToolError(ValueError):
+class GraphToolError(ToolError):
     """The query was refused or failed. The message is meant to be shown to the model."""
 
 
