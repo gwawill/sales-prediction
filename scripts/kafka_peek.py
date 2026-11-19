@@ -53,5 +53,8 @@ if __name__ == "__main__":
     found = peek(n)
     for m in found:
         key = m.key().decode() if m.key() else None
-        print(f"partition {m.partition()} offset {m.offset():>5}  key={key}  {m.value().decode()[:160]}")
+        headers = dict(m.headers() or [])
+        problem = headers.get("generator-problem", b"-").decode()
+        print(f"partition {m.partition()} offset {m.offset():>5}  [{problem:>17}]  key={key}  "
+              f"{m.value().decode()[:120]}")
     print(f"{len(found)} messages shown.")

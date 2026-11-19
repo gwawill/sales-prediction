@@ -3,13 +3,18 @@
     stream-produce --rate 2 --count 100       2 orders a second, 100 in total
     stream-produce --rate 5 --seconds 60      5 a second for one minute
     stream-produce                            1 a second until Ctrl+C
+    stream-produce --clean                    no deliberate problems
 
 Each message:
-    key    the transaction_id, so a resent copy lands in the same partition as the original
-    value  the order as JSON (same fields as a daily file row; missing values are null)
+    key      the transaction_id, so a resent copy lands in the same partition as the original
+    value    the order as JSON (same fields as a daily file row; missing values are null)
+    header   "generator-problem": which deliberate problem the order carries ("clean" if
+             none). FOR CHECKING ONLY: the consumer must never read it, because a real
+             source would not have it. Tests use it to confirm every problem was handled.
 
-Orders come from the live order maker (datagen/live.py). In this version they are sent
-clean; deliberate problems are switched on in task T6.2.
+Orders come from the live order maker (datagen/live.py), with the same problem mix as the
+history (FR-4): about 5% damaged, including duplicates sent twice in a row and late orders
+dated 1-3 days back (FR-15).
 """
 
 from __future__ import annotations
@@ -32,8 +37,11 @@ from sales_poc.log import get_logger, setup_logging
 
 log = get_logger(__name__)
 
-# Called once per order: (key, value). Real runs send to Kafka; tests collect them.
-Send = Callable[[bytes | None, bytes], None]
+PROBLEM_HEADER = "generator-problem"
+
+Headers = list[tuple[str, bytes]]
+# Called once per order: (key, value, headers). Real runs send to Kafka; tests collect them.
+Send = Callable[[bytes | None, bytes, Headers], None]
 
 
 @dataclass
@@ -42,11 +50,12 @@ class ProduceStats:
     by_problem: dict[str, int] = field(default_factory=dict)
 
 
-def encode(order: LiveOrder) -> tuple[bytes | None, bytes]:
-    """(key, value) for one order."""
+def encode(order: LiveOrder) -> tuple[bytes | None, bytes, Headers]:
+    """(key, value, headers) for one order."""
     tx = order.payload.get("transaction_id")
     key = tx.encode() if tx else None
-    return key, json.dumps(order.payload).encode()
+    headers = [(PROBLEM_HEADER, (order.problem or "clean").encode())]
+    return key, json.dumps(order.payload).encode(), headers
 
 
 def produce_orders(
@@ -106,10 +115,12 @@ class KafkaSender:
             self.failed += 1
             log.error("delivery_failed", extra={"error": str(err)})
 
-    def __call__(self, key: bytes | None, value: bytes) -> None:
+    def __call__(self, key: bytes | None, value: bytes, headers: Headers | None = None) -> None:
         while True:
             try:
-                self.producer.produce(self.topic, key=key, value=value, on_delivery=self._on_delivery)
+                self.producer.produce(
+                    self.topic, key=key, value=value, headers=headers, on_delivery=self._on_delivery
+                )
                 break
             except BufferError:
                 self.producer.poll(0.5)  # local queue full: let it drain, then retry
@@ -127,6 +138,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--count", type=int, default=None, help="stop after this many orders")
     parser.add_argument("--seconds", type=float, default=None, help="stop after this many seconds")
     parser.add_argument("--seed", type=int, default=None, help="repeatable orders (default: different each run)")
+    parser.add_argument("--clean", action="store_true", help="send no deliberate problems")
     parser.add_argument("--reference", type=Path, default=data_dir / "reference")
     args = parser.parse_args(argv)
     if args.rate <= 0:
@@ -138,11 +150,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     sys.stdout.reconfigure(line_buffering=True)
     setup_logging()
-    maker = LiveOrderMaker(load_reference_data(args.reference), seed=args.seed, rates={})
+    # rates=None means the standard problem mix; {} means none.
+    maker = LiveOrderMaker(
+        load_reference_data(args.reference), seed=args.seed, rates={} if args.clean else None
+    )
     sender = KafkaSender()
 
     limit = f"{args.count} orders" if args.count else f"{args.seconds:g} seconds" if args.seconds else "Ctrl+C"
-    print(f"Sending {args.rate:g} orders/second to '{sender.topic}' until {limit}.")
+    kind = "clean orders" if args.clean else "orders with deliberate problems (~5%)"
+    print(f"Sending {args.rate:g} {kind}/second to '{sender.topic}' until {limit}.")
     stats = produce_orders(sender, maker, args.rate, args.count, args.seconds)
     unconfirmed = sender.close()
 
