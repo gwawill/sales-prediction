@@ -16,6 +16,6 @@ def openrouter_client(settings: LlmSettings | None = None) -> OpenAI:
     return OpenAI(
         base_url=s.openrouter_base_url,
         api_key=s.openrouter_api_key.get_secret_value(),
-        timeout=60,
-        max_retries=2,
+        timeout=s.llm_timeout_seconds,
+        max_retries=2,  # the library retries brief network and rate-limit problems itself
     )

@@ -97,6 +97,9 @@ class LlmSettings(_GroupSettings):
     openrouter_api_key: SecretStr
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str
+    llm_max_tokens: int = Field(default=800, gt=0)          # longest answer allowed (cost cap)
+    llm_temperature: float = Field(default=0.0, ge=0, le=2)  # 0 = as consistent as possible
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
     agent_max_steps: int = Field(default=6, gt=0)
 
 
