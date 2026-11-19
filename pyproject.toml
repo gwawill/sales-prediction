@@ -24,6 +24,7 @@ dependencies = [
 [project.scripts]
 generate-data = "sales_poc.datagen.cli:main"
 batch-load = "sales_poc.pipelines.batch:main"
+stream-produce = "sales_poc.pipelines.producer:main"
 
 [project.optional-dependencies]
 dev = [
