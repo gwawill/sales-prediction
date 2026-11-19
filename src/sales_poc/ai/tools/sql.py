@@ -28,10 +28,13 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
-from dataclasses import dataclass
 
 import duckdb
 import pandas as pd
+
+from sales_poc.ai.tools.table import Table
+
+SqlResult = Table   # the name used before the table was shared with graph_query
 
 TABLE = "sales"
 MAX_ROWS = 50
@@ -83,35 +86,8 @@ TOOL_SPEC = {
 }
 
 
-def _cell(value) -> str:
-    """Text for one value; decimals rounded to 2 places so money reads cleanly."""
-    if value is None:
-        return ""
-    if isinstance(value, float):
-        return f"{value:.2f}"
-    return str(value)
-
-
 class SqlToolError(ValueError):
     """The query was refused or failed. The message is meant to be shown to the model."""
-
-
-@dataclass(frozen=True)
-class SqlResult:
-    query: str
-    columns: list[str]
-    rows: list[tuple]
-    truncated: bool          # True if there were more than MAX_ROWS rows
-
-    def to_text(self) -> str:
-        """A compact table for the model to read."""
-        lines = [" | ".join(self.columns)]
-        lines += [" | ".join(_cell(v) for v in row) for row in self.rows]
-        if not self.rows:
-            lines.append("(no rows)")
-        if self.truncated:
-            lines.append(f"(only the first {MAX_ROWS} rows are shown)")
-        return "\n".join(lines)
 
 
 def check_select(query: str) -> str:

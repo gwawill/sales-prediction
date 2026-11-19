@@ -34,6 +34,7 @@ vector-search = "sales_poc.vectors.store:search_main"
 forecast-run = "sales_poc.forecast.publish:main"
 rag-ask = "sales_poc.ai.rag:main"
 sql-query = "sales_poc.ai.tools.sql:main"
+graph-query = "sales_poc.ai.tools.graph:main"
 
 [project.optional-dependencies]
 dev = [
