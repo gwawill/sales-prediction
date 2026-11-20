@@ -100,6 +100,46 @@ graph-query "MATCH (c:Customer)-[:LOCATED_IN]->(r:Region) RETURN r.region_id, co
 agent-ask "Which enterprise customers who bought servers also bought storage?" --steps
 ```
 
+## Simulate incoming data
+
+Once steps 1 to 6 have run, you can show both ways data arrives, live, in separate terminals.
+
+**Real-time orders.** The producer makes up new orders on the spot and sends them to Kafka.
+About 5% of them have a deliberate problem (a duplicate, a late time, a missing value, ...).
+The consumer cleans each small batch and stores it in the lake.
+
+```powershell
+stream-produce --rate 2          # 2 new orders per second, until Ctrl+C
+stream-consume                   # in a second terminal
+```
+
+Useful producer options: `--count 100` or `--seconds 60` stop it automatically, `--seed 42`
+makes the orders repeatable, and `--clean` sends no problems. Every command shows all its
+options with `--help`.
+
+**A new daily file.** Start the batch pipeline on a schedule. It checks `data/incoming/` every
+minute and loads only files it has not seen before.
+
+```powershell
+batch-load --every 1             # in a third terminal
+```
+
+Then play the source system. Make the next day's file in a separate folder, and copy it into
+the watched folder in one move, so the pipeline never sees a half-written file:
+
+```powershell
+generate-data --out data\new_day --start 2026-11-01 --days 1
+copy data\new_day\incoming\sales_2026-11-01.csv data\incoming\
+```
+
+On its next check, `batch-load` loads that one file and writes a quality report for it. For
+the day after, use `--start 2026-11-02`, and add `--overwrite` so `generate-data` may replace
+the earlier file in `data\new_day\`.
+
+**See the result.** Click **Reload data** in the dashboard to see the new sales in the charts.
+The graph and the summaries do not update by themselves: run `graph-load` and `vector-load` so
+the agent knows about the new data too.
+
 ## The web API and the dashboard
 
 `api-serve` starts a FastAPI service. Its page http://127.0.0.1:8000/docs lets you try every
