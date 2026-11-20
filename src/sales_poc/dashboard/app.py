@@ -6,6 +6,10 @@
 Streamlit re-runs this script from the top whenever someone changes a control. The slow parts
 are cached: the lake is read into DuckDB once, and the forecast for five minutes.
 Everything on the page only reads.
+
+The page keeps up by itself: every LAKE_CHECK_SECONDS (default 60) a small background part of
+the page asks the SQL tool to check the lake for changed days. Only if the data changed does
+the whole page redraw, with the new numbers. The last answer to a question stays on screen.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ def page() -> None:
     import streamlit as st
 
     from sales_poc.ai.tools.sql import SqlTool
+    from sales_poc.config import get_app_settings
     from sales_poc.dashboard import charts
     from sales_poc.dashboard.data import (CATEGORIES, REGIONS, ask_api, last_month_summary, monthly_revenue,
                                           series_forecast, weekly_actuals)
@@ -41,16 +46,26 @@ def page() -> None:
         from sales_poc.lake.store import s3_store
         return latest_forecast(s3_store())
 
-    @st.cache_data(ttl=300, show_spinner=False)
-    def monthly(category: str | None, today: date):
+    # `version` is the lake data's version: when new data arrives it changes, so these
+    # cached results are worked out again instead of being reused.
+    @st.cache_data(ttl=300, max_entries=100, show_spinner=False)
+    def monthly(category: str | None, today: date, version: int):
         return monthly_revenue(sql_tool(), today, category)
 
-    @st.cache_data(ttl=300, show_spinner=False)
-    def actuals(category: str, region: str, last_week: date):
+    @st.cache_data(ttl=300, max_entries=100, show_spinner=False)
+    def actuals(category: str, region: str, last_week: date, version: int):
         return weekly_actuals(sql_tool(), category, region, last_week)
 
     theme = getattr(getattr(st.context, "theme", None), "type", None) or "light"
     today = date.today()
+    version = sql_tool().check_lake()
+    st.session_state["lake_version"] = version
+
+    @st.fragment(run_every=get_app_settings().lake_check_seconds)
+    def watch_lake():
+        """Runs on its own timer. Redraws the whole page only when the data has changed."""
+        if sql_tool().check_lake() != st.session_state.get("lake_version"):
+            st.rerun(scope="app")
 
     with st.sidebar:
         st.header("Settings")
@@ -62,10 +77,12 @@ def page() -> None:
             st.rerun()
 
     st.title("Sales dashboard")
-    st.caption("A read-only view of the clean data lake, the latest forecast, and the AI agent.")
+    st.caption("A read-only view of the clean data lake, the latest forecast, and the AI agent. "
+               "New data appears by itself within about a minute.")
+    watch_lake()
 
     # --- headline numbers ------------------------------------------------------------------
-    all_months = monthly(None, today)
+    all_months = monthly(None, today, version)
     summary = last_month_summary(all_months)
     found = saved_forecast()
     cols = st.columns(3)
@@ -82,7 +99,7 @@ def page() -> None:
     st.subheader("Monthly revenue by region")
     choice = st.selectbox("Category", ["All categories", *CATEGORIES], key="monthly_category")
     category = None if choice == "All categories" else choice
-    data = all_months if category is None else monthly(category, today)
+    data = all_months if category is None else monthly(category, today, version)
     st.altair_chart(charts.monthly_chart(data, theme), width="stretch")
     st.caption(f"Complete months only; {today:%B %Y} is still in progress and is left out.")
     with st.expander("Show as table"):
@@ -99,7 +116,7 @@ def page() -> None:
         f_category = left.selectbox("Category", CATEGORIES, key="forecast_category")
         f_region = right.selectbox("Region", REGIONS, key="forecast_region")
         last_known = date.fromisoformat(info["weeks_used"][1])
-        result = series_forecast(actuals(f_category, f_region, last_known), table, f_category, f_region)
+        result = series_forecast(actuals(f_category, f_region, last_known, version), table, f_category, f_region)
         st.altair_chart(charts.forecast_chart(result.chart, theme), width="stretch")
         verdict = "better than" if result.backtest_wape < result.baseline_wape else "no better than"
         st.caption(
@@ -122,7 +139,10 @@ def page() -> None:
         submitted = st.form_submit_button("Ask")
     if submitted and question.strip():
         with st.spinner("Thinking... the agent may run a few queries."):
-            answer = ask_api(api_url, question.strip())   # the agent (the API's default mode)
+            # the agent (the API's default mode). Kept, so it survives the page redrawing.
+            st.session_state["last_answer"] = ask_api(api_url, question.strip())
+    answer = st.session_state.get("last_answer")
+    if answer is not None:
         if not answer.ok:
             st.error(answer.detail)
         else:

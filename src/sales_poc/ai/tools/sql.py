@@ -6,9 +6,11 @@ The agent writes one SQL SELECT; this code runs it with DuckDB and returns a sma
 
 DuckDB is a small SQL engine that runs inside this Python process, with no server.
 
-How the data gets in: the clean Parquet files are read from the lake once, the first time a
-query runs, and copied into an in-memory DuckDB table called `sales`. Later queries reuse it.
-Call `refresh()` to read the lake again.
+How the data gets in: the clean Parquet files are read from the lake the first time a query
+runs, and copied into an in-memory DuckDB table called `sales`. Later queries reuse it. At
+most every LAKE_CHECK_SECONDS (default 60), a query first asks the lake which days changed
+(one quick listing, see lake/mirror.py). If any did, only those days are read again and the
+table is rebuilt, so a long-running web API sees new orders without a restart.
 
 Why it cannot change anything (FR-29), from the outside in:
     1. The query must parse as exactly one SELECT statement (DuckDB's own parser decides,
@@ -28,6 +30,8 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
+import time
+from collections.abc import Callable
 
 import duckdb
 import pandas as pd
@@ -126,28 +130,57 @@ def locked_connection(rows: pd.DataFrame) -> duckdb.DuckDBPyConnection:
 
 
 class SqlTool:
-    def __init__(self, store=None, rows: pd.DataFrame | None = None):
-        """Give `rows` directly (tests), or a lake `store` (default: the S3 lake)."""
+    def __init__(self, store=None, rows: pd.DataFrame | None = None, check_seconds: float | None = None,
+                 clock: Callable[[], float] = time.monotonic):
+        """Give `rows` directly (tests; never re-read), or a lake `store` (default: the S3 lake),
+        checked for changed days at most every `check_seconds` (default: LAKE_CHECK_SECONDS)."""
         self._store, self._rows, self._con = store, rows, None
+        self._check_seconds, self._clock = check_seconds, clock
+        self._mirror = None
+        self._checked_at: float | None = None
+        self._version = 0
         self._lock = threading.Lock()
 
     def _connection(self) -> duckdb.DuckDBPyConnection:
-        """The sealed connection, loading the data the first time. Call with self._lock held."""
-        if self._con is None:
-            rows = self._rows if self._rows is not None else self._read_lake()
-            self._con = locked_connection(rows)
+        """The sealed connection, loading or updating the data first if needed.
+        Call with self._lock held."""
+        if self._rows is not None:
+            if self._con is None:
+                self._con, self._version = locked_connection(self._rows), 1
+            return self._con
+        now = self._clock()
+        if self._con is None or self._checked_at is None or now - self._checked_at >= self._interval():
+            changed = self._lake().refresh()
+            self._checked_at = now
+            if changed or self._con is None:
+                self._con = locked_connection(self._lake().rows())
+                self._version += 1
         return self._con
 
-    def _read_lake(self) -> pd.DataFrame:
-        from sales_poc.lake.clean import read_all_clean
-        from sales_poc.lake.store import s3_store
+    def _interval(self) -> float:
+        if self._check_seconds is None:
+            from sales_poc.config import get_app_settings
+            self._check_seconds = get_app_settings().lake_check_seconds
+        return self._check_seconds
 
-        return read_all_clean(self._store or s3_store())
+    def _lake(self):
+        if self._mirror is None:
+            from sales_poc.lake.mirror import LakeMirror
+            from sales_poc.lake.store import s3_store
+            self._mirror = LakeMirror(self._store or s3_store())
+        return self._mirror
+
+    def check_lake(self) -> int:
+        """Load or update the data if a check is due, and return the data's version: a number
+        that goes up every time the table is rebuilt with changed data."""
+        with self._lock:
+            self._connection()
+            return self._version
 
     def refresh(self) -> None:
-        """Forget the loaded copy; the next query reads the lake again."""
+        """Check the lake for changed days on the next query, without waiting for the timer."""
         with self._lock:
-            self._rows, self._con = None, None
+            self._checked_at = None
 
     def run(self, query: str) -> SqlResult:
         text = check_select(query)

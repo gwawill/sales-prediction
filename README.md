@@ -89,6 +89,7 @@ order the first time.
 | 6 | `forecast-run` | Forecasts the next 4 weeks of revenue for every category and region, choosing the best of four models by how well each did on past weeks. |
 | 7 | `api-serve` | Starts the web API on http://127.0.0.1:8000 (see below). |
 | 8 | `dashboard` | Starts the dashboard on http://127.0.0.1:8501 (needs the API for questions). |
+| 9 | `sync-stores --every 5` | Keeps Neo4j and the summaries up to date with the lake: every 5 minutes it loads only the days that are new or changed. Use it instead of re-running steps 4 and 5 by hand. |
 
 Smaller commands for trying things out:
 
@@ -136,9 +137,32 @@ On its next check, `batch-load` loads that one file and writes a quality report 
 the day after, use `--start 2026-11-02`, and add `--overwrite` so `generate-data` may replace
 the earlier file in `data\new_day\`.
 
-**See the result.** Click **Reload data** in the dashboard to see the new sales in the charts.
-The graph and the summaries do not update by themselves: run `graph-load` and `vector-load` so
-the agent knows about the new data too.
+**See the result.** Nothing needs to be re-run by hand. Each part follows the lake on its own:
+
+| Part | Sees new data | How |
+|---|---|---|
+| Dashboard charts | within about a minute | checks the lake every `LAKE_CHECK_SECONDS` (60) and redraws only if something changed |
+| Agent's SQL answers (web API) | within about a minute | the same check, before a SQL question |
+| Graph (Neo4j) and summaries | within the `sync-stores` interval | `sync-stores --every 5` in its own terminal |
+| Forecast | when `forecast-run` is run | on purpose: forecasts work on whole weeks and are retrained on a schedule |
+
+Every check reads only the days that changed, using the fingerprint S3 keeps for each file.
+**Reload data** in the dashboard still forces a full re-read at once.
+
+So a full live demo uses these terminals, each one a separate service, as in a real platform:
+
+```powershell
+api-serve                        # 1. the web API
+dashboard                        # 2. the dashboard
+stream-consume                   # 3. loads live orders into the lake
+batch-load --every 1             # 4. loads new daily files into the lake
+sync-stores --every 5            # 5. keeps the graph and the summaries up to date
+stream-produce --rate 2          # 6. the outside world: a shop sending orders
+```
+
+The first `sync-stores` pass reads the whole lake. If it has never run before, it also loads
+every day into Neo4j once, which takes a few minutes. After that, a pass with nothing new
+takes seconds.
 
 ## The web API and the dashboard
 
@@ -186,8 +210,8 @@ PASS or FAIL for each one. It takes about 10 minutes and a few cents of language
   Those orders do stay in the topic, so the next `stream-consume` loads them into the real
   lake, like any other live orders.
 - Checks 6 to 8 read the live platform (the lake, Neo4j, the saved forecast and the agent),
-  so run steps 1 to 6 above first. If you stream new orders, run `graph-load` again before the
-  demo, or check 6 will find the graph a step behind the lake.
+  so run steps 1 to 6 above first. If you stream new orders, run `sync-stores --once` (or
+  `graph-load`) before the demo, or check 6 will find the graph a step behind the lake.
 - Check 9 runs the unit tests with every cloud address pointed at nothing.
 
 ## How this differs from a real platform

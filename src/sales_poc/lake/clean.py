@@ -77,11 +77,16 @@ def from_parquet_bytes(data: bytes) -> pd.DataFrame:
     return _typed(rows)
 
 
+def empty_clean() -> pd.DataFrame:
+    """A clean table with no rows, but the right columns and types."""
+    return _typed(pd.DataFrame(columns=OUTPUT_COLUMNS))
+
+
 def read_clean_day(store: ObjectStore, day: date) -> pd.DataFrame:
     """The clean rows stored for `day`, or an empty table with the right columns."""
     key = clean_key(day)
     if not store.exists(key):
-        return _typed(pd.DataFrame(columns=OUTPUT_COLUMNS))
+        return empty_clean()
     return from_parquet_bytes(store.get(key))
 
 
@@ -146,7 +151,7 @@ def read_all_clean(store: ObjectStore, workers: int = 16) -> pd.DataFrame:
     """Every clean row in the lake, oldest day first. Days are read in parallel."""
     days = list_clean_days(store)
     if not days:
-        return _typed(pd.DataFrame(columns=OUTPUT_COLUMNS))
+        return empty_clean()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         tables = list(pool.map(lambda d: read_clean_day(store, d), days))
     return pd.concat(tables, ignore_index=True)

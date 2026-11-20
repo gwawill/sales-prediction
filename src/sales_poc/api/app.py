@@ -15,6 +15,8 @@ How it fits together: the endpoints are `async`, and each hands its slow, blocki
 (S3, Neo4j, the language model) to a worker thread, so one long question does not stop the
 service from answering /health. The agent's tools are created once and shared by every
 request, so the lake is read into DuckDB only on the first SQL question, not on each one.
+After that, the SQL tool re-reads only the days that changed, at most every
+LAKE_CHECK_SECONDS, so answers include new orders without restarting the API.
 
 Everything here only reads. There is no login (out of scope in spec.md), so the service
 listens on 127.0.0.1 by default: only this PC can reach it.

@@ -9,12 +9,13 @@ from sales_poc.datagen.reference import build_reference_data
 from sales_poc.etl.pipeline import run_etl
 from sales_poc.graph.loader import TRANSACTIONS_CYPHER
 from sales_poc.lake.clean import clean_key, write_clean
+from sales_poc.lake.mirror import day_stamps
 from sales_poc.lake.store import LocalStore
 from sales_poc.pipelines.sync import (
     STATE_KEY,
     StoreSync,
     changed_summaries,
-    day_stamps,
+
     describe,
     read_graph_state,
 )

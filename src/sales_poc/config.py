@@ -127,6 +127,8 @@ class AppSettings(_GroupSettings):
     stream_batch_seconds: float = Field(default=10.0, gt=0)
     api_host: str = "127.0.0.1"   # only this PC can reach the API; there is no login (spec: out of scope)
     api_port: int = Field(default=8000, gt=0, lt=65536)
+    # How often the web API's SQL tool and the dashboard look for new data in the lake.
+    lake_check_seconds: float = Field(default=60.0, gt=0)
 
 
 ALL_GROUPS: tuple[type[_GroupSettings], ...] = (

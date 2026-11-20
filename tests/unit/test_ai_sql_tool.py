@@ -116,16 +116,91 @@ def test_a_slow_query_is_stopped(tool, monkeypatch):
         tool.run("SELECT COUNT(*) FROM range(100000000000) a, range(1000) b")
 
 
-def test_the_lake_is_read_once_and_again_after_refresh(monkeypatch):
-    reads = []
-    monkeypatch.setattr(SqlTool, "_read_lake", lambda self: reads.append(1) or rows())
-    tool = SqlTool(store=object())
-    tool.run("SELECT 1")
-    tool.run("SELECT 2")
-    assert len(reads) == 1
+@pytest.fixture(scope="module")
+def lake_rows():
+    """Clean lake rows for 1 to 3 March 2026."""
+    from datetime import date, datetime, timezone
+
+    from sales_poc.datagen.history import generate_history
+    from sales_poc.datagen.problems import add_problems
+    from sales_poc.datagen.reference import build_reference_data
+    from sales_poc.etl.pipeline import run_etl
+
+    ref = build_reference_data(seed=42)
+    messy = add_problems(generate_history(ref, seed=42, start=date(2026, 3, 1), days=3), seed=42)
+    raw = pd.concat([messy.files[d] for d in sorted(messy.files)], ignore_index=True)
+    return run_etl(raw, ref, "batch", ingested_at=datetime(2026, 11, 20, tzinfo=timezone.utc)).clean
+
+
+class CountingStore:
+    """A LocalStore that counts listings (each lake check is one listing)."""
+
+    def __init__(self, root):
+        from sales_poc.lake.store import LocalStore
+        self.inner, self.listings = LocalStore(root), 0
+
+    def stamps(self, prefix=""):
+        self.listings += 1
+        return self.inner.stamps(prefix)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+def count(tool):
+    return tool.run("SELECT COUNT(*) FROM sales").rows[0][0]
+
+
+def test_new_lake_data_shows_up_after_the_check_interval(tmp_path, lake_rows):
+    from sales_poc.lake.clean import write_clean
+
+    first_two, third = lake_rows[lake_rows["event_date"].astype(str) < "2026-03-03"], \
+        lake_rows[lake_rows["event_date"].astype(str) == "2026-03-03"]
+    store, now = CountingStore(tmp_path / "bucket"), [0.0]
+    write_clean(store.inner, first_two)
+    tool = SqlTool(store=store, check_seconds=60, clock=lambda: now[0])
+
+    assert count(tool) == len(first_two) and tool.check_lake() == 1
+    write_clean(store.inner, third)                  # new orders reach the lake
+
+    now[0] = 30.0                                    # before the interval: no check, old data
+    assert count(tool) == len(first_two) and store.listings == 1
+
+    now[0] = 61.0                                    # after it: one check, new data
+    assert count(tool) == len(lake_rows) and store.listings == 2
+    assert tool.check_lake() == 2                    # the version went up
+
+
+def test_a_check_that_finds_nothing_keeps_the_version(tmp_path, lake_rows):
+    from sales_poc.lake.clean import write_clean
+
+    store, now = CountingStore(tmp_path / "bucket"), [0.0]
+    write_clean(store.inner, lake_rows)
+    tool = SqlTool(store=store, check_seconds=60, clock=lambda: now[0])
+    assert tool.check_lake() == 1
+
+    now[0] = 120.0
+    assert tool.check_lake() == 1 and store.listings == 2
+
+
+def test_refresh_checks_on_the_next_query_without_waiting(tmp_path, lake_rows):
+    from sales_poc.lake.clean import write_clean
+
+    store = CountingStore(tmp_path / "bucket")
+    write_clean(store.inner, lake_rows)
+    tool = SqlTool(store=store, check_seconds=3600, clock=lambda: 0.0)
+    count(tool)
+
     tool.refresh()
-    tool.run("SELECT 3")
-    assert len(reads) == 2
+    count(tool)
+    assert store.listings == 2
+
+
+def test_rows_given_directly_are_never_re_read():
+    tool = SqlTool(rows=rows())
+    assert tool.check_lake() == 1
+    tool.refresh()
+    assert count(tool) == len(rows()) and tool.check_lake() == 1
 
 
 def test_the_tool_spec_names_every_column():

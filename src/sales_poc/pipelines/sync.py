@@ -31,15 +31,12 @@ import argparse
 import json
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
-
-import pandas as pd
 
 from sales_poc.datagen.reference import ReferenceData
 from sales_poc.graph.loader import load_reference, load_transactions
-from sales_poc.lake.clean import CLEAN_PREFIX, read_clean_day
+from sales_poc.lake.mirror import READ_WORKERS, LakeMirror
 from sales_poc.lake.store import ObjectStore
 from sales_poc.log import get_logger
 from sales_poc.vectors.embeddings import Embedder
@@ -49,7 +46,6 @@ from sales_poc.vectors.summaries import Summary, build_summaries
 log = get_logger(__name__)
 
 STATE_KEY = "state/graph_synced.json"
-READ_WORKERS = 16
 
 
 @dataclass(frozen=True)
@@ -64,16 +60,6 @@ class SyncResult:
     @property
     def changed(self) -> bool:
         return bool(self.graph_days or self.summaries_stored or self.summaries_deleted)
-
-
-def day_stamps(store: ObjectStore) -> dict[date, str]:
-    """{day: fingerprint} for every clean day file in the lake."""
-    stamps = {}
-    for key, stamp in store.stamps(CLEAN_PREFIX).items():
-        part = key[len(CLEAN_PREFIX):].split("/", 1)[0]  # "event_date=2026-03-01"
-        if part.startswith("event_date="):
-            stamps[date.fromisoformat(part.split("=", 1)[1])] = stamp
-    return stamps
 
 
 def read_graph_state(store: ObjectStore) -> dict[date, str]:
@@ -108,25 +94,12 @@ class StoreSync:
     embedder: Embedder
     ref: ReferenceData
     workers: int = READ_WORKERS
-    _days: dict[date, pd.DataFrame] = field(default_factory=dict)   # the lake, one table per day
-    _read_stamps: dict[date, str] = field(default_factory=dict)     # fingerprints of _days
-    _stored: dict[str, dict] | None = None                           # the index's summaries
+    _lake: LakeMirror | None = None              # the lake in memory, kept up to date
+    _stored: dict[str, dict] | None = None       # the index's summaries
     _reference_loaded: bool = False
 
-    def _refresh_lake(self, current: dict[date, str]) -> int:
-        """Read new or changed days into memory and drop days that are gone. Returns days read."""
-        to_read = [day for day, stamp in current.items() if self._read_stamps.get(day) != stamp]
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            tables = list(pool.map(lambda d: read_clean_day(self.store, d), to_read))
-        for day, table in zip(to_read, tables):
-            self._days[day], self._read_stamps[day] = table, current[day]
-        for day in set(self._days) - set(current):
-            del self._days[day], self._read_stamps[day]
-        return len(to_read)
-
-    def _rows(self, days: list[date]) -> pd.DataFrame:
-        """The in-memory rows of `days` (all of them already read), oldest day first."""
-        return pd.concat([self._days[d] for d in sorted(days)], ignore_index=True)
+    def __post_init__(self):
+        self._lake = LakeMirror(self.store, self.workers)
 
     def _sync_graph(self, current: dict[date, str]) -> tuple[int, int]:
         """Load new or changed days into Neo4j. Returns (days, transactions)."""
@@ -137,7 +110,7 @@ class StoreSync:
         if not self._reference_loaded:
             load_reference(self.driver, self.ref)   # constraints and reference nodes, once per start
             self._reference_loaded = True
-        sent = load_transactions(self.driver, self._rows(pending))
+        sent = load_transactions(self.driver, self._lake.rows(pending))
         # Only now, after Neo4j accepted them, are the days marked as done. Every day in the
         # lake is now either newly loaded or was already loaded with the same fingerprint.
         write_graph_state(self.store, current)
@@ -148,11 +121,12 @@ class StoreSync:
         if self._stored is None:
             self.index.ensure()
             self._stored = self.index.stored()
-        if not self._days:
+        rows = self._lake.rows()
+        if rows.empty:
             # An empty lake would mean "delete every summary". That is far more likely a
             # mistake (wrong bucket or prefix) than real, so leave the index alone.
             return 0, 0, len(self._stored)
-        summaries = build_summaries(self._rows(list(self._days)))
+        summaries = build_summaries(rows)
         to_store, stale = changed_summaries(summaries, self._stored)
         if to_store:
             self.index.put(to_store, self.embedder.embed_documents([s.text for s in to_store]))
@@ -164,8 +138,9 @@ class StoreSync:
         return len(to_store), len(stale), len(self._stored)
 
     def run_once(self) -> SyncResult:
-        current = day_stamps(self.store)
-        days_read = self._refresh_lake(current)
+        changed = self._lake.refresh()
+        current = self._lake.stamps
+        days_read = len([d for d in changed if d in current])   # not counting days that left
         graph_days, sent = self._sync_graph(current)
         stored, deleted, total = self._sync_vectors()
         result = SyncResult(days_read, graph_days, sent, stored, deleted, total)
