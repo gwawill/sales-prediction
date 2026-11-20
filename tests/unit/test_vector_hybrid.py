@@ -19,11 +19,25 @@ from sales_poc.vectors.store import SearchResult
         ("sales for 2026-08", {"month": ["2026-08"]}),
         ("storage and servers", {"category": ["Server", "Storage"]}),
         ("how are we doing overall?", {}),
+        # Countries from the reference data name their region.
+        ("laptop sales in Germany", {"category": ["Laptop"], "region_id": ["EMEA"]}),
+        ("storage in Australia", {"category": ["Storage"], "region_id": ["APJ"]}),
+        ("servers in the United States", {"category": ["Server"], "region_id": ["NA"]}),
+        ("desktops in Brazil", {"category": ["Desktop"], "region_id": ["LATAM"]}),
+        ("monitors in South Korea", {"category": ["Monitor"], "region_id": ["APJ"]}),
     ],
 )
 def test_labels_found_in_questions(question, expected):
     found = labels_in(question)
     assert {k: sorted(v) for k, v in found.items()} == {k: sorted(v) for k, v in expected.items()}
+
+
+def test_every_reference_country_names_its_region():
+    from sales_poc.datagen.reference import COUNTRIES_BY_REGION
+
+    for region, countries in COUNTRIES_BY_REGION.items():
+        for country in countries:
+            assert labels_in(f"sales in {country}").get("region_id") == [region], country
 
 
 def test_na_inside_other_words_is_not_north_america():

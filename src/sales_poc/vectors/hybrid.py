@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
+from sales_poc.datagen.reference import COUNTRIES_BY_REGION
+
 CANDIDATES = 30
 LABEL_BONUS = 0.1
 
@@ -34,9 +36,11 @@ CATEGORY_WORDS = {
 
 REGION_WORDS = {
     "emea": "EMEA", "europe": "EMEA", "european": "EMEA", "middle east": "EMEA", "africa": "EMEA",
-    "apj": "APJ", "asia": "APJ", "pacific": "APJ", "japan": "APJ",
-    "north america": "NA", "united states": "NA", "usa": "NA", "canada": "NA",
+    "apj": "APJ", "asia": "APJ", "pacific": "APJ",
+    "north america": "NA", "usa": "NA",
     "latam": "LATAM", "latin america": "LATAM", "south america": "LATAM",
+    # Every country a customer can be in, from the reference data ("germany" -> EMEA).
+    **{country.lower(): region for region, countries in COUNTRIES_BY_REGION.items() for country in countries},
 }
 
 SEGMENT_WORDS = {

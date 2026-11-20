@@ -40,3 +40,15 @@ def test_the_index_holds_one_vector_per_summary(index):
     keys = index.keys()
     assert len(keys) == 864
     assert len({k for k in keys if k.startswith("customer:")}) == 500
+
+
+def test_the_question_set_mostly_finds_the_right_summary(index):
+    """The fixed question set in vectors/evaluate.py. Measured on 2026-11-20: 19 of 20 in the
+    top 3, 19 ranked first (the miss is a customer-ID question). A drop below 18 means a
+    change made the search worse."""
+    from sales_poc.vectors.evaluate import evaluate, report
+
+    embedder = get_embedder()
+    outcomes = evaluate(lambda q, k: search(index, embedder, q, top_k=k))
+    found = sum(o.rank is not None for o in outcomes)
+    assert found >= 18, report(outcomes)
