@@ -152,7 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     sys.argv = ["streamlit", "run", str(Path(__file__)), "--server.address", settings.api_host,
                 "--server.port", str(args.port), "--browser.gatherUsageStats", "false",
                 # headless: no first-run email question in the terminal; open the printed address yourself
-                "--server.headless", "true"]
+                "--server.headless", "true",
+                # viewer: hide Streamlit's own Deploy button and developer menu items
+                "--client.toolbarMode", "viewer"]
     return streamlit_cli.main()
 
 
