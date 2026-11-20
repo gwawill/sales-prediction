@@ -86,6 +86,18 @@ class VectorIndex:
             if not token:
                 return keys
 
+    def stored(self) -> dict[str, dict]:
+        """{key: metadata} for every stored vector. The metadata includes the summary text,
+        so a caller can tell which summaries have changed without embedding them again."""
+        stored, token = {}, None
+        while True:
+            page = self.client.list_vectors(**self._ids(), returnMetadata=True,
+                                            **({"nextToken": token} if token else {}))
+            stored.update({v["key"]: dict(v.get("metadata", {})) for v in page.get("vectors", [])})
+            token = page.get("nextToken")
+            if not token:
+                return stored
+
     def put(self, summaries: list[Summary], vectors: list[list[float]]) -> None:
         if len(summaries) != len(vectors):
             raise ValueError("One vector per summary is needed.")

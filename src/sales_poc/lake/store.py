@@ -10,6 +10,7 @@ it gets. Keys are S3-style paths like "raw/batch/sales_2026-03-01.csv".
 
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 from typing import Protocol
@@ -26,6 +27,7 @@ class ObjectStore(Protocol):
     def get(self, key: str) -> bytes: ...
     def exists(self, key: str) -> bool: ...
     def list(self, prefix: str = "") -> list[str]: ...
+    def stamps(self, prefix: str = "") -> dict[str, str]: ...
     def delete(self, key: str) -> None: ...
 
 
@@ -59,6 +61,10 @@ class LocalStore:
             return []
         keys = (p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file())
         return sorted(k for k in keys if k.startswith(prefix))
+
+    def stamps(self, prefix: str = "") -> dict[str, str]:
+        """{key: fingerprint of its content}. The fingerprint changes whenever the file does."""
+        return {key: hashlib.md5(self.get(key)).hexdigest() for key in self.list(prefix)}
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
@@ -114,6 +120,16 @@ class S3Store:
         for page in paginator.paginate(Bucket=self.bucket, Prefix=self._key(prefix)):
             keys += [item["Key"][len(self.prefix):] for item in page.get("Contents", [])]
         return sorted(keys)
+
+    def stamps(self, prefix: str = "") -> dict[str, str]:
+        """{key: ETag}. S3 gives every file an ETag that changes whenever the file is written
+        with different content, and the listing includes it, so no file has to be downloaded."""
+        stamps = {}
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=self._key(prefix)):
+            stamps.update({item["Key"][len(self.prefix):]: item["ETag"].strip('"')
+                           for item in page.get("Contents", [])})
+        return dict(sorted(stamps.items()))
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=self._key(key))

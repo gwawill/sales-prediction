@@ -42,12 +42,14 @@ class FakeS3Vectors:
         for k in keys:
             self.indexes[indexName]["vectors"].pop(k, None)
 
-    def list_vectors(self, vectorBucketName, indexName, nextToken=None):
-        keys = sorted(self.indexes[indexName]["vectors"])
+    def list_vectors(self, vectorBucketName, indexName, nextToken=None, returnMetadata=False):
+        vectors = self.indexes[indexName]["vectors"]
+        keys = sorted(vectors)
         start = int(nextToken or 0)
         page = keys[start:start + 3]  # tiny pages, to exercise paging
         more = start + 3 < len(keys)
-        return {"vectors": [{"key": k} for k in page], **({"nextToken": str(start + 3)} if more else {})}
+        items = [{"key": k, **({"metadata": vectors[k]["metadata"]} if returnMetadata else {})} for k in page]
+        return {"vectors": items, **({"nextToken": str(start + 3)} if more else {})}
 
     def query_vectors(self, vectorBucketName, indexName, queryVector, topK, returnMetadata, returnDistance, filter=None):
         def matches(meta, f):
@@ -125,6 +127,16 @@ def test_summaries_that_disappear_are_deleted(index):
     result = load_summaries(index, SUMMARIES[:2], embedder())
 
     assert result.deleted == 2 and result.total == 2
+
+
+def test_stored_returns_every_key_with_its_text_and_labels(index):
+    load_summaries(index, SUMMARIES, embedder())
+
+    stored = index.stored()
+
+    assert set(stored) == {s.summary_id for s in SUMMARIES}   # across several pages of 3
+    assert stored["customer:C00001"] == {"kind": "customer", "customer_id": "C00001", "region_id": "EMEA",
+                                         "text": "Customer C00001 in EMEA"}
 
 
 def test_large_loads_are_sent_in_batches_of_500(index):
