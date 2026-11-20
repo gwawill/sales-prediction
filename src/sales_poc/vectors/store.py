@@ -25,12 +25,13 @@ from dataclasses import dataclass
 from botocore.exceptions import ClientError
 
 from sales_poc.vectors.embeddings import Embedder, get_embedder
-from sales_poc.vectors.hybrid import CANDIDATES, rerank
+from sales_poc.vectors.hybrid import CANDIDATES, labels_in, rerank
 from sales_poc.vectors.summaries import Summary
 
 PUT_BATCH = 500          # S3 Vectors accepts at most 500 vectors per put request
 DELETE_BATCH = 500
 TEXT_KEY = "text"        # stored with each vector, but not filterable
+CUSTOMER_MATCHES = 3     # summaries fetched directly for a customer ID named in a question
 
 
 class VectorIndexError(RuntimeError):
@@ -169,7 +170,9 @@ def search(
     """The summaries that best answer `question`.
 
     hybrid=True (default): take the CANDIDATES closest by meaning, then move up results whose
-    labels the question names (see hybrid.py). hybrid=False: plain search by meaning only.
+    labels the question names (see hybrid.py). A customer ID in the question (C00012) also
+    fetches that customer's summary directly by its label, so it can't be missed.
+    hybrid=False: plain search by meaning only.
     Keyword labels (region=..., category=..., month=..., kind=...) narrow the search first.
     """
     vector = embedder.embed_query(question)
@@ -177,7 +180,13 @@ def search(
     if not hybrid:
         return index.query(vector, top_k, where)
     candidates = index.query(vector, max(top_k, CANDIDATES), where)
-    return rerank(question, candidates, top_k)
+    # A customer ID in the question names one exact summary. All 500 customer summaries read
+    # alike, so it is often not among the closest by meaning; fetch it directly instead.
+    for customer_id in labels_in(question).get("customer_id", []):
+        exact = {"customer_id": {"$eq": customer_id}}
+        candidates += index.query(vector, CUSTOMER_MATCHES, exact if where is None else {"$and": [where, exact]})
+    unique = list({r.summary_id: r for r in reversed(candidates)}.values())[::-1]   # first copy of each
+    return rerank(question, unique, top_k)
 
 
 def default_index() -> VectorIndex:

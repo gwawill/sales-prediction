@@ -175,6 +175,47 @@ def test_search_can_be_narrowed_by_labels(index):
     assert [r.summary_id for r in apj_laptops] == ["catreg:Laptop:APJ:2026-03"]
 
 
+def many_customers(index):
+    """40 customer summaries. C00039's text is slightly less like a customer question (about
+    0.95 against 1.00 by meaning), so by meaning alone it is not among the 30 closest, as
+    happens with the real, near-identical customer summaries."""
+    summaries = [Summary(f"customer:C{i:05d}", f"Customer C{i:05d} customer",
+                         {"kind": "customer", "customer_id": f"C{i:05d}", "region_id": "EMEA" if i % 2 else "APJ"})
+                 for i in range(39)]
+    summaries.append(Summary("customer:C00039", "Customer C00039 customer customer laptop",
+                             {"kind": "customer", "customer_id": "C00039", "region_id": "EMEA"}))
+    load_summaries(index, summaries, embedder())
+
+
+def test_a_named_customer_is_found_even_when_meaning_alone_misses_it(index):
+    many_customers(index)
+    question = "What does customer C00039 buy?"
+
+    by_meaning = [r.summary_id for r in index.query(embedder().embed_query(question), top_k=30)]
+    [best, *_] = search(index, embedder(), question, top_k=3)
+
+    assert "customer:C00039" not in by_meaning
+    assert best.summary_id == "customer:C00039" and best.matched_labels == 1
+
+
+def test_a_named_customer_still_respects_the_other_filters(index):
+    many_customers(index)
+
+    found = search(index, embedder(), "What does customer C00039 buy?", top_k=40, region="APJ")
+
+    assert "customer:C00039" not in {r.summary_id for r in found}   # C00039 is in EMEA
+    assert {r.metadata["region_id"] for r in found} == {"APJ"}
+
+
+def test_each_summary_is_returned_once(index):
+    many_customers(index)
+
+    found = search(index, embedder(), "customer C00002", top_k=40)
+
+    ids = [r.summary_id for r in found]
+    assert len(ids) == len(set(ids)) and ids[0] == "customer:C00002"
+
+
 def test_filter_building():
     assert filters() is None
     assert filters(region="EMEA") == {"region_id": {"$eq": "EMEA"}}
