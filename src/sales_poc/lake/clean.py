@@ -13,6 +13,12 @@ batch and stream is stored once.
 A day is only written if something changed, so an unchanged day's file stays byte for byte
 the same.
 
+Two writers at once (batch-load and stream-consume can touch the same day): the day file is
+saved only if it is still the version that was read (a conditional write, see store.py). If
+another writer saved in between, the file is read again and the merge redone on top of it, so
+neither writer's rows are lost. After MERGE_ATTEMPTS clashes in a row it gives up with
+ConcurrentWriteError; the run then fails and can be repeated safely.
+
 Known limit, fine at PoC size: a corrected copy whose event_date changed would leave the old
 copy in the old day's file. Handling that properly needs a table format with MERGE, such as
 Apache Iceberg or Delta Lake (see plan.md).
@@ -21,6 +27,8 @@ Apache Iceberg or Delta Lake (see plan.md).
 from __future__ import annotations
 
 import io
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
@@ -33,6 +41,12 @@ from sales_poc.etl.schema import CLEAN_SCHEMA
 from sales_poc.lake.store import ObjectStore
 
 CLEAN_PREFIX = "clean/transactions/"
+MERGE_ATTEMPTS = 8
+RETRY_SECONDS = 0.2      # wait a little longer after each clash, with some randomness
+
+
+class ConcurrentWriteError(RuntimeError):
+    """Another writer kept changing the same day file; nothing was overwritten."""
 
 # Exact pandas types of a clean row, restored after reading a Parquet file back.
 LAKE_SCHEMA: dict[str, str] = {
@@ -123,11 +137,18 @@ def merge_day(existing: pd.DataFrame, new: pd.DataFrame, day: date) -> tuple[pd.
 
 
 def _write_day(store: ObjectStore, day: date, day_rows: pd.DataFrame) -> DayMerge:
-    existing = read_clean_day(store, day)
-    merged, summary = merge_day(existing, day_rows, day)
-    if summary.written:
-        store.put(clean_key(day), to_parquet_bytes(merged))
-    return summary
+    """Read, merge, and save only if nobody saved the day in between; otherwise start over."""
+    key = clean_key(day)
+    for attempt in range(1, MERGE_ATTEMPTS + 1):
+        data, tag = store.get_with_tag(key)
+        existing = from_parquet_bytes(data) if data is not None else empty_clean()
+        merged, summary = merge_day(existing, day_rows, day)
+        if not summary.written or store.put_if_unchanged(key, to_parquet_bytes(merged), tag):
+            return summary
+        time.sleep(RETRY_SECONDS * attempt * random.uniform(0.5, 1.5))
+    raise ConcurrentWriteError(
+        f"{key} kept changing while this run merged into it ({MERGE_ATTEMPTS} tries). Nothing was "
+        "overwritten; run again.")
 
 
 def write_clean(store: ObjectStore, rows: pd.DataFrame, workers: int = 1) -> list[DayMerge]:

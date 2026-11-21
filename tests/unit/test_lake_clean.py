@@ -157,3 +157,80 @@ def test_reading_a_missing_day_gives_an_empty_typed_table(store):
 def test_duplicate_ids_in_the_input_are_refused(store, clean):
     with pytest.raises(ValueError, match="unique"):
         write_clean(store, pd.concat([clean.head(2), clean.head(1)]))
+
+
+# --- Two writers on the same day (batch-load and stream-consume at once) ---------------------
+
+
+class OtherWriterInBetween:
+    """A store where another writer saves the day file right after we read it, `clashes` times."""
+
+    def __init__(self, inner, other_rows, clashes=1):
+        self.inner, self.other_rows, self.clashes = inner, other_rows, clashes
+        self.reads = 0
+
+    def get_with_tag(self, key):
+        found = self.inner.get_with_tag(key)
+        self.reads += 1
+        if self.reads <= self.clashes:
+            write_clean(self.inner, self.other_rows.assign(quantity=self.other_rows["quantity"] + self.reads))
+        return found
+
+    def put_if_unchanged(self, key, data, tag):
+        return self.inner.put_if_unchanged(key, data, tag)
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    import sales_poc.lake.clean as lake_clean
+    monkeypatch.setattr(lake_clean, "RETRY_SECONDS", 0)
+
+
+def one_day(clean):
+    day = clean["event_date"].iloc[0]
+    rows = clean[clean["event_date"] == day]
+    return day, rows.iloc[:5], rows.iloc[5:10]
+
+
+def test_a_writer_that_saves_in_between_does_not_lose_its_rows(store, clean, no_wait):
+    day, ours, theirs = one_day(clean)
+    clashing = OtherWriterInBetween(store, theirs)
+
+    [result] = write_clean(clashing, ours)
+
+    stored = set(read_clean_day(store, day)["transaction_id"])
+    assert set(ours["transaction_id"]) | set(theirs["transaction_id"]) <= stored
+    assert result.added == len(ours) and result.total == 10
+    assert clashing.reads == 2          # the clash made it read the day again and redo the merge
+
+
+def test_it_gives_up_after_repeated_clashes_without_overwriting(store, clean, no_wait):
+    from sales_poc.lake.clean import MERGE_ATTEMPTS, ConcurrentWriteError
+
+    day, ours, theirs = one_day(clean)
+    clashing = OtherWriterInBetween(store, theirs, clashes=MERGE_ATTEMPTS)
+
+    with pytest.raises(ConcurrentWriteError, match="run again"):
+        write_clean(clashing, ours)
+
+    stored = read_clean_day(store, day)
+    assert set(stored["transaction_id"]) == set(theirs["transaction_id"])   # theirs kept, intact
+    assert clashing.reads == MERGE_ATTEMPTS
+
+
+def test_several_writers_at_once_keep_every_row(store, clean):
+    """4 writers (the project has 2: batch and stream), each adding 3 orders to the same day,
+    with the real wait between tries."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    day = clean["event_date"].iloc[0]
+    rows = clean[clean["event_date"] == day].head(12)
+
+    def writer(w):
+        for i in range(w, 12, 4):
+            write_clean(store, rows.iloc[[i]])
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(writer, range(4)))
+
+    assert set(read_clean_day(store, day)["transaction_id"]) == set(rows["transaction_id"])

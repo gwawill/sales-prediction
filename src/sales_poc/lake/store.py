@@ -6,11 +6,22 @@ it gets. Keys are S3-style paths like "raw/batch/sales_2026-03-01.csv".
     store = s3_store()                      # the real bucket from S3_BUCKET
     store = s3_store(prefix="_test/abc/")   # everything under a test folder
     store = LocalStore(tmp_path)            # unit tests: a normal folder
+
+Safe read-change-write (used by lake/clean.py, where batch and stream can touch the same day):
+
+    data, tag = store.get_with_tag(key)     # tag: the file's version, or None if it is missing
+    ...change data...
+    saved = store.put_if_unchanged(key, new_data, tag)
+
+put_if_unchanged only saves if the file is still the version that was read (tag None: only if
+the file still does not exist). If another writer saved in between, it saves nothing and
+returns False, so the caller can read again and redo its change instead of overwriting.
 """
 
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from pathlib import Path
 from typing import Protocol
@@ -29,6 +40,13 @@ class ObjectStore(Protocol):
     def list(self, prefix: str = "") -> list[str]: ...
     def stamps(self, prefix: str = "") -> dict[str, str]: ...
     def delete(self, key: str) -> None: ...
+    def get_with_tag(self, key: str) -> tuple[bytes | None, str | None]: ...
+    def put_if_unchanged(self, key: str, data: bytes, tag: str | None) -> bool: ...
+
+
+# S3 saves and reads a file all at once; a folder on disk does not, so another thread could read
+# a half-written file. LocalStore's reads and writes take turns to behave like S3. Tests only.
+_LOCAL_LOCK = threading.RLock()
 
 
 class LocalStore:
@@ -37,6 +55,10 @@ class LocalStore:
     def __init__(self, root: Path):
         self.root = Path(root)
 
+    @staticmethod
+    def _tag(data: bytes) -> str:
+        return hashlib.md5(data).hexdigest()
+
     def _path(self, key: str) -> Path:
         if key.startswith("/") or ".." in key.split("/"):
             raise ValueError(f"Bad key: {key!r}")
@@ -44,14 +66,16 @@ class LocalStore:
 
     def put(self, key: str, data: bytes) -> None:
         path = self._path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        with _LOCAL_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
 
     def get(self, key: str) -> bytes:
         path = self._path(key)
-        if not path.is_file():
-            raise KeyError(key)
-        return path.read_bytes()
+        with _LOCAL_LOCK:
+            if not path.is_file():
+                raise KeyError(key)
+            return path.read_bytes()
 
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
@@ -64,10 +88,24 @@ class LocalStore:
 
     def stamps(self, prefix: str = "") -> dict[str, str]:
         """{key: fingerprint of its content}. The fingerprint changes whenever the file does."""
-        return {key: hashlib.md5(self.get(key)).hexdigest() for key in self.list(prefix)}
+        return {key: self._tag(self.get(key)) for key in self.list(prefix)}
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
+
+    def get_with_tag(self, key: str) -> tuple[bytes | None, str | None]:
+        try:
+            data = self.get(key)
+        except KeyError:
+            return None, None
+        return data, self._tag(data)
+
+    def put_if_unchanged(self, key: str, data: bytes, tag: str | None) -> bool:
+        with _LOCAL_LOCK:
+            if self.get_with_tag(key)[1] != tag:
+                return False
+            self.put(key, data)
+            return True
 
 
 GET_ATTEMPTS = 3
@@ -133,6 +171,36 @@ class S3Store:
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=self._key(key))
+
+    def get_with_tag(self, key: str) -> tuple[bytes | None, str | None]:
+        """The file's bytes and its ETag (S3's version fingerprint), or (None, None) if missing."""
+        for attempt in range(1, GET_ATTEMPTS + 1):
+            try:
+                response = self.client.get_object(Bucket=self.bucket, Key=self._key(key))
+                return response["Body"].read(), response["ETag"]
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+                    return None, None
+                raise
+            except BROKEN_DOWNLOAD:
+                if attempt == GET_ATTEMPTS:
+                    raise
+                time.sleep(GET_RETRY_SECONDS * attempt)
+
+    def put_if_unchanged(self, key: str, data: bytes, tag: str | None) -> bool:
+        """S3 conditional write: IfMatch saves only if the ETag is still `tag`; IfNoneMatch="*"
+        saves only if no file exists yet. S3 answers 412 when the file changed, and 409 when
+        another conditional write to the same key is in progress; both mean "read again"."""
+        condition = {"IfMatch": tag} if tag is not None else {"IfNoneMatch": "*"}
+        try:
+            self.client.put_object(Bucket=self.bucket, Key=self._key(key), Body=data, **condition)
+            return True
+        except ClientError as exc:
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            code = exc.response.get("Error", {}).get("Code")
+            if status in (409, 412) or code in ("PreconditionFailed", "ConditionalRequestConflict"):
+                return False
+            raise
 
 
 def s3_store(settings: AwsSettings | None = None, prefix: str = "") -> S3Store:

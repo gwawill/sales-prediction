@@ -43,6 +43,23 @@ def test_s3_store_basics(store):
         store.get("a/missing.txt")
 
 
+def test_s3_conditional_write(store):
+    """S3 really refuses a save when the file changed since it was read (no lost updates)."""
+    assert store.get_with_tag("c.txt") == (None, None)
+    assert store.put_if_unchanged("c.txt", b"one", None)
+    assert not store.put_if_unchanged("c.txt", b"two", None)        # exists now
+
+    data, tag = store.get_with_tag("c.txt")
+    assert data == b"one"
+    store.put("c.txt", b"someone else")
+    assert not store.put_if_unchanged("c.txt", b"two", tag)         # stale version refused
+    assert store.get("c.txt") == b"someone else"
+
+    _, tag = store.get_with_tag("c.txt")
+    assert store.put_if_unchanged("c.txt", b"two", tag)
+    assert store.get("c.txt") == b"two"
+
+
 def test_raw_batch_file_round_trip_on_s3(store, tmp_path):
     path = tmp_path / "sales_2026-03-01.csv"
     path.write_bytes(b"transaction_id\nTX-1\n")
