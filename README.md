@@ -179,6 +179,12 @@ endpoint in the browser.
 If port 8000 is taken on your PC, set `API_PORT` in `.env`, or run `api-serve --port 8077`
 and `dashboard --api http://127.0.0.1:8077`.
 
+To start the API, the dashboard and a public link together, run `run-app`. It also starts
+`cloudflared tunnel --url http://127.0.0.1:8501` (Cloudflare must be installed), which prints a
+`https://....trycloudflare.com` address anyone can open. Ctrl+C stops all three. Use
+`run-app --no-tunnel` to keep everything on your PC, and `--api-port` or `--dashboard-port` to
+change ports.
+
 `dashboard` shows last month's numbers, monthly revenue by region, actual and forecast weekly
 revenue for any category and region, and a question box. The first load reads the whole lake
 into memory, which takes about 30 seconds.

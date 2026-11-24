@@ -42,6 +42,7 @@ graph-query = "sales_poc.ai.tools.graph:main"
 agent-ask = "sales_poc.ai.agent:main"
 api-serve = "sales_poc.api.app:main"
 dashboard = "sales_poc.dashboard.app:main"
+run-app = "sales_poc.launcher:main"
 
 [project.optional-dependencies]
 dev = [
