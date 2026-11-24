@@ -137,6 +137,38 @@ def test_ask_api_when_the_api_is_not_running():
     assert not result.ok and "Is api-serve running?" in result.detail
 
 
+# --- the page, safe to share publicly ------------------------------------------------------
+
+def test_the_page_has_no_api_address_box_and_asks_the_address_it_was_started_with(monkeypatch):
+    """A visitor must not be able to point this PC's requests at an address of their choice."""
+    from streamlit.testing.v1 import AppTest
+
+    import sales_poc.ai.tools.sql as sql
+    import sales_poc.dashboard.data as data
+    import sales_poc.forecast.publish as publish
+    import sales_poc.lake.store as store
+    from sales_poc.dashboard import app
+    from sales_poc.dashboard.data import AskResult
+
+    asked = []
+    monkeypatch.setenv(app.API_URL_ENV, "http://127.0.0.1:8077")
+    monkeypatch.setattr(sql, "SqlTool", lambda: lake())
+    monkeypatch.setattr(publish, "latest_forecast", lambda s: None)
+    monkeypatch.setattr(store, "s3_store", lambda: None)
+    monkeypatch.setattr(data, "ask_api", lambda url, q: asked.append(url) or AskResult(True, "Fine.", [], "0 tool calls"))
+
+    page = AppTest.from_file(app.__file__, default_timeout=30).run()
+    assert not page.exception
+    assert len(page.text_input) == 0                     # no address box anywhere on the page
+
+    page.text_area[0].input("How are sales?")
+    next(b for b in page.button if b.label == "Ask").click()
+    page.run()
+
+    assert asked == ["http://127.0.0.1:8077"]
+    assert "Fine." in [m.value for m in page.markdown]
+
+
 # --- charts --------------------------------------------------------------------------------
 
 def layers(spec):

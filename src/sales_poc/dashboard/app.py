@@ -10,6 +10,8 @@ Everything on the page only reads.
 The page keeps up by itself: every LAKE_CHECK_SECONDS (default 60) a small background part of
 the page asks the SQL tool to check the lake for changed days. Only if the data changed does
 the whole page redraw, with the new numbers. The last answer to a question stays on screen.
+
+The web API address comes only from `dashboard --api`, so the page is safe to share.
 """
 
 from __future__ import annotations
@@ -67,10 +69,13 @@ def page() -> None:
         if sql_tool().check_lake() != st.session_state.get("lake_version"):
             st.rerun(scope="app")
 
+    # Fixed when the dashboard starts (`dashboard --api ...`), never typed on the page: the page may be
+    # shared publicly (for example through a Cloudflare Tunnel), and an address box would let any
+    # visitor make this PC send requests to an address of their choice.
+    api_url = os.environ.get(API_URL_ENV, "http://127.0.0.1:8000")
+
     with st.sidebar:
         st.header("Settings")
-        api_url = st.text_input("Web API address", os.environ.get(API_URL_ENV, "http://127.0.0.1:8000"),
-                                help="Where api-serve is running. Only the question box uses it.")
         if st.button("Reload data"):
             st.cache_data.clear()
             st.cache_resource.clear()
