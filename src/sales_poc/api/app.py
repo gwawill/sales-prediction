@@ -4,7 +4,7 @@
     http://127.0.0.1:8000/docs      FastAPI's built-in page to try every endpoint
 
 Endpoints:
-    GET  /health                    is the service up? (instant, touches nothing)
+    GET  /health                    is the service up? (instant, touches nothing; HEAD works too)
     GET  /health?deep=true          also checks S3, S3 Vectors and Neo4j for real (a few seconds)
     GET  /quality/latest            the newest ETL quality report (FR-20); ?source=batch|stream
     GET  /forecast                  the latest saved 4-week forecast; ?category=...&region=...
@@ -167,6 +167,8 @@ def create_app(services: Services | None = None) -> FastAPI:
                   description="Read-only API over the sales data lake, forecast and AI layer.")
     app.state.services = services
 
+    # HEAD too: free uptime monitors (used to keep a sleeping host awake) send only HEAD.
+    @app.head("/health", include_in_schema=False)
     @app.get("/health")
     async def health(deep: bool = False):
         body: dict[str, Any] = {"status": "ok", "time": datetime.now(timezone.utc).isoformat(timespec="seconds")}

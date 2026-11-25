@@ -72,6 +72,14 @@ def test_health_is_instant_and_touches_nothing(tmp_path):
     assert response.json()["status"] == "ok" and "checks" not in response.json()
 
 
+def test_health_answers_head_for_uptime_monitors(tmp_path):
+    services = FakeServices(tmp_path, checks={"s3": lambda: pytest.fail("should not run")})
+    with TestClient(create_app(services)) as c:
+        response = c.head("/health")
+    assert response.status_code == 200
+    assert response.content == b""
+
+
 def test_deep_health_runs_the_checks(tmp_path):
     services = FakeServices(tmp_path, checks={"s3": lambda: "bucket ok", "neo4j": lambda: "graph ok"})
     with TestClient(create_app(services)) as c:
